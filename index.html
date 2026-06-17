@@ -683,8 +683,8 @@
                                         </div>
                                         <input type="range" id="calc-vrms-temp" min="100" max="1000" step="10"
                                             value="300"
-                                            class="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-emerald-500"
-                                            oninput="document.getElementById('lbl-calc-vrms-t').innerText=this.value+' K'; calculateVrms();">
+                                            class="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-emerald-500">
+
                                     </div>
                                 </div>
                             </div>
@@ -1236,11 +1236,62 @@
             setTimeout(() => { m.classList.add('hidden'); }, 200);
         }
 
-        function renderMath() {
-            if (typeof MathJax !== 'undefined' && MathJax.typesetPromise) {
-                MathJax.typesetPromise().catch(err => console.log(err));
-            }
+        // --- Performance & Optimization Helpers ---
+        function throttle(func, limit) {
+            let inThrottle;
+            return function() {
+                const args = arguments;
+                const context = this;
+                if (!inThrottle) {
+                    func.apply(context, args);
+                    inThrottle = true;
+                    setTimeout(() => inThrottle = false, limit);
+                }
+            };
         }
+
+        function debounce(func, delay) {
+            let timeout;
+            return function() {
+                const context = this;
+                const args = arguments;
+                clearTimeout(timeout);
+                timeout = setTimeout(() => func.apply(context, args), delay);
+            };
+        }
+
+        let mathjaxQueue = Promise.resolve();
+        const pendingMathElements = new Set();
+        let mathjaxTimeout = null;
+
+        function queueTypeset(element) {
+            if (typeof MathJax === 'undefined' || !MathJax.typesetPromise) return;
+            if (element) {
+                pendingMathElements.add(element);
+            }
+            if (mathjaxTimeout) {
+                clearTimeout(mathjaxTimeout);
+            }
+            mathjaxTimeout = setTimeout(() => {
+                const elements = pendingMathElements.size > 0 ? Array.from(pendingMathElements) : null;
+                pendingMathElements.clear();
+                mathjaxQueue = mathjaxQueue
+                    .then(() => {
+                        if (elements) {
+                            MathJax.typesetClear(elements);
+                            return MathJax.typesetPromise(elements);
+                        } else {
+                            return MathJax.typesetPromise();
+                        }
+                    })
+                    .catch(err => console.warn("MathJax typeset error:", err));
+            }, 100);
+        }
+
+        function renderMath() {
+            queueTypeset(null);
+        }
+
 
         // --- Review Tabs Logic ---
         function switchReviewTab(tabName) {
@@ -1260,11 +1311,19 @@
         }
 
         function stopSimulations() {
-            if (gasPressureAnimFrame) cancelAnimationFrame(gasPressureAnimFrame);
+            if (gasPressureAnimFrame) {
+                cancelAnimationFrame(gasPressureAnimFrame);
+                gasPressureAnimFrame = null;
+            }
+            if (gasPressureInterval) {
+                clearInterval(gasPressureInterval);
+                gasPressureInterval = null;
+            }
         }
 
         // --- SIM 1: Origin of Pressure (Canvas) ---
         let gasPressureAnimFrame = null;
+        let gasPressureInterval = null;
         let gasParts = [];
         let wallHitsCount = 0;
 
@@ -1278,6 +1337,10 @@
             const lblN = document.getElementById('lbl-sim1-num');
             const lblP = document.getElementById('lbl-sim1-pressure');
             const lblRate = document.getElementById('sim1-collision-rate');
+
+            // Local cache of inputs to prevent layout thrashing
+            let currentSpeed = parseFloat(sSpeed.value);
+            let currentNum = parseInt(sNum.value);
 
             const createParticles = (N) => {
                 gasParts = [];
@@ -1293,38 +1356,61 @@
                 }
             };
 
-            createParticles(parseInt(sNum.value));
+            createParticles(currentNum);
 
-            sNum.oninput = () => {
-                lblN.innerText = `${sNum.value} อนุภาค`;
-                createParticles(parseInt(sNum.value));
+            const updateUI = () => {
+                let tempText = "ปกติ (300 K)";
+                if (currentSpeed > 3) tempText = "ร้อนมาก"; 
+                else if (currentSpeed < 1.5) tempText = "เย็น";
+                if (lblS.innerText !== tempText) lblS.innerText = tempText;
+
+                // P ~ N * v^2 
+                const P_relative = (currentNum / 50) * (currentSpeed * currentSpeed / 4);
+                const pStr = P_relative.toFixed(2);
+                if (lblP.innerText !== pStr) lblP.innerText = pStr;
             };
 
-            setInterval(() => {
+            // Set initial UI values
+            updateUI();
+
+            sSpeed.oninput = throttle(() => {
+                currentSpeed = parseFloat(sSpeed.value);
+                updateUI();
+            }, 30);
+
+            sNum.oninput = throttle(() => {
+                currentNum = parseInt(sNum.value);
+                lblN.innerText = `${currentNum} อนุภาค`;
+                createParticles(currentNum);
+                updateUI();
+            }, 50);
+
+            if (gasPressureInterval) clearInterval(gasPressureInterval);
+            gasPressureInterval = setInterval(() => {
                 // Reset hit counter every 500ms to calculate rate
                 const rate = wallHitsCount;
-                if (rate > 200) { lblRate.innerText = "การชน: สูงมาก"; lblRate.className = "text-rose-400"; }
-                else if (rate > 100) { lblRate.innerText = "การชน: สูง"; lblRate.className = "text-amber-400"; }
-                else { lblRate.innerText = "การชน: ต่ำ"; lblRate.className = "text-sky-400"; }
+                let text = "การชน: ต่ำ";
+                let colorClass = "text-sky-400";
+                if (rate > 200) { 
+                    text = "การชน: สูงมาก"; 
+                    colorClass = "text-rose-400"; 
+                } else if (rate > 100) { 
+                    text = "การชน: สูง"; 
+                    colorClass = "text-amber-400"; 
+                }
+                if (lblRate.innerText !== text) lblRate.innerText = text;
+                if (lblRate.className !== colorClass) lblRate.className = colorClass;
                 wallHitsCount = 0;
             }, 500);
 
             const loop = () => {
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
-                const speed = parseFloat(sSpeed.value); // Multiplier
-                let tempText = "ปกติ (300 K)";
-                if (speed > 3) tempText = "ร้อนมาก"; else if (speed < 1.5) tempText = "เย็น";
-                lblS.innerText = tempText;
-
-                // P ~ N * v^2 
-                const P_relative = (parseInt(sNum.value) / 50) * (speed * speed / 4);
-                lblP.innerText = P_relative.toFixed(2);
 
                 ctx.fillStyle = '#818cf8';
                 ctx.beginPath();
                 gasParts.forEach(p => {
-                    p.x += p.vx * speed;
-                    p.y += p.vy * speed;
+                    p.x += p.vx * currentSpeed;
+                    p.y += p.vy * currentSpeed;
 
                     let hit = false;
                     if (p.x - p.r < 0) { p.x = p.r; p.vx *= -1; hit = true; }
@@ -1343,10 +1429,23 @@
             loop();
         }
 
+
         // --- SIM 3: Vrms Calculator ---
         const M_MAP = {
             "0.002": "2", "0.004": "4", "0.028": "28", "0.032": "32", "0.044": "44"
         };
+
+        const debounceCalculateVrmsMath = debounce((T, M_kg) => {
+            const mathDiv = document.getElementById('calc-vrms-math');
+            if (mathDiv) {
+                mathDiv.innerHTML = `
+                  <div>\\( v_{rms} = \\sqrt{\\frac{3RT}{M}} \\)</div>
+                  <div>\\( v_{rms} = \\sqrt{\\frac{3(8.31)(${T})}{${M_kg}}} \\)</div>
+                `;
+                queueTypeset(mathDiv);
+            }
+        }, 150);
+
         function calculateVrms() {
             const T = parseFloat(document.getElementById('calc-vrms-temp').value) || 300;
             const M_kg = parseFloat(document.getElementById('calc-vrms-gas').value) || 0.032;
@@ -1357,18 +1456,8 @@
             const v = Math.sqrt((3 * R_GAS * T) / M_kg);
             document.getElementById('calc-vrms-result').innerText = v.toFixed(2);
 
-            // Update Math Substitution dynamically
-            const mathDiv = document.getElementById('calc-vrms-math');
-            if (mathDiv) {
-                mathDiv.innerHTML = `
-          <div>\\( v_{rms} = \\sqrt{\\frac{3RT}{M}} \\)</div>
-          <div>\\( v_{rms} = \\sqrt{\\frac{3(8.31)(${T})}{${M_kg}}} \\)</div>
-        `;
-                if (typeof MathJax !== 'undefined' && MathJax.typesetPromise) {
-                    MathJax.typesetClear([mathDiv]);
-                    MathJax.typesetPromise([mathDiv]).catch(err => console.log(err));
-                }
-            }
+            // Update Math Substitution dynamically (Debounced)
+            debounceCalculateVrmsMath(T, M_kg);
 
             // Update Simulator Animation
             const v_light = Math.sqrt((3 * R_GAS * T) / 0.002); // แก๊สอ้างอิงเบาสุด (H2)
@@ -1384,6 +1473,7 @@
             const lblGasB = document.getElementById('lbl-sim3-gasB');
             if (lblGasB) lblGasB.innerHTML = `<i class="fa-solid fa-circle text-rose-400 text-[12px] align-middle mr-1"></i> แก๊สที่เลือก (${gasName})`;
         }
+
 
         // --- Dynamic Question Templates (16.3 Kinetic Theory) ---
         class SeededRNG {
@@ -2113,6 +2203,17 @@
             updateLatestScore();
             switchReviewTab('16-3-1');
             renderMath();
+
+            // Bind Vrms Temp slider throttled handler
+            const vrmsTempSlider = document.getElementById('calc-vrms-temp');
+            if (vrmsTempSlider) {
+                vrmsTempSlider.oninput = throttle(() => {
+                    const val = vrmsTempSlider.value;
+                    document.getElementById('lbl-calc-vrms-t').innerText = val + ' K';
+                    calculateVrms();
+                }, 30);
+            }
+
 
             const activeSession = sessionStorage.getItem(EXAM_STATE_KEY);
             if (activeSession) {
