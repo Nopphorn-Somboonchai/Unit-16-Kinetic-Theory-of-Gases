@@ -815,18 +815,22 @@
 
                     <!-- Numeric Zone -->
                     <div id="prac-numeric-zone" class="space-y-4">
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div>
+                        <div class="grid grid-cols-1 gap-4">
+                            <div id="prac-input-zone-1">
                                 <label id="lbl-prac-input-1"
-                                    class="block text-xs font-bold text-slate-600 mb-1">คำตอบ:</label>
+                                    class="block text-xs font-bold text-slate-600 mb-1">คำตอบ 1:</label>
                                 <input type="text" autocomplete="off" id="prac-input-val1"
                                     placeholder="เช่น 2.4e-21 หรือ 500"
                                     class="w-full px-4 py-3 rounded-xl border-2 border-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 text-center font-mono text-lg transition">
                             </div>
                             <div id="prac-input-zone-2" class="hidden">
-                                <label id="lbl-prac-input-2" class="block text-xs font-bold text-slate-600 mb-1">คำตอบ
-                                    2:</label>
+                                <label id="lbl-prac-input-2" class="block text-xs font-bold text-slate-600 mb-1">คำตอบ 2:</label>
                                 <input type="text" autocomplete="off" id="prac-input-val2"
+                                    class="w-full px-4 py-3 rounded-xl border-2 border-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 text-center font-mono text-lg transition">
+                            </div>
+                            <div id="prac-input-zone-3" class="hidden">
+                                <label id="lbl-prac-input-3" class="block text-xs font-bold text-slate-600 mb-1">คำตอบ 3:</label>
+                                <input type="text" autocomplete="off" id="prac-input-val3"
                                     class="w-full px-4 py-3 rounded-xl border-2 border-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 text-center font-mono text-lg transition">
                             </div>
                         </div>
@@ -1847,7 +1851,9 @@
             const cz = document.getElementById('prac-choice-zone'), nz = document.getElementById('prac-numeric-zone');
             document.getElementById('prac-input-val1').value = '';
             document.getElementById('prac-input-val2').value = '';
+            document.getElementById('prac-input-val3').value = '';
             document.getElementById('prac-input-zone-2').classList.add('hidden');
+            document.getElementById('prac-input-zone-3').classList.add('hidden');
             document.getElementById('prac-feedback').classList.add('hidden');
             document.getElementById('prac-explanation-box').classList.add('hidden');
 
@@ -1860,6 +1866,11 @@
                 if (template.type === 'numeric_double') {
                     document.getElementById('prac-input-zone-2').classList.remove('hidden');
                     document.getElementById('lbl-prac-input-2').innerHTML = template.inputs[1].label;
+                } else if (template.type === 'numeric_triple') {
+                    document.getElementById('prac-input-zone-2').classList.remove('hidden');
+                    document.getElementById('lbl-prac-input-2').innerHTML = template.inputs[1].label;
+                    document.getElementById('prac-input-zone-3').classList.remove('hidden');
+                    document.getElementById('lbl-prac-input-3').innerHTML = template.inputs[2].label;
                 }
             }
             renderMath();
@@ -1872,15 +1883,23 @@
 
             const v1 = document.getElementById('prac-input-val1').value.trim();
             const v2 = document.getElementById('prac-input-val2').value.trim();
+            const v3 = document.getElementById('prac-input-val3').value.trim();
 
-            if (!v1 || (template.type === 'numeric_double' && !v2)) {
+            if (!v1 || 
+                (template.type === 'numeric_double' && !v2) || 
+                (template.type === 'numeric_triple' && (!v2 || !v3))) {
                 triggerAlert("กรอกไม่ครบ", "ระบุคำตอบให้ครบก่อนตรวจครับ", "fa-circle-question", "bg-amber-100 text-amber-600");
                 return;
             }
 
             const c1 = isNumericAnswerCorrect(v1, instance.answersRaw[0]);
-            const c2 = template.type === 'numeric_double' ? isNumericAnswerCorrect(v2, instance.answersRaw[1]) : true;
-            showPracticeFeedback(c1 && c2, instance.explanation());
+            const c2 = (template.type === 'numeric_double' || template.type === 'numeric_triple') 
+                ? isNumericAnswerCorrect(v2, instance.answersRaw[1]) 
+                : true;
+            const c3 = (template.type === 'numeric_triple') 
+                ? isNumericAnswerCorrect(v3, instance.answersRaw[2]) 
+                : true;
+            showPracticeFeedback(c1 && c2 && c3, instance.explanation());
         }
 
         function checkPracticeChoice(choice) {
