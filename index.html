@@ -35,6 +35,18 @@
             --muted: #64748b;
             --paper: rgba(255, 255, 255, 0.95);
             --line: rgba(30, 41, 59, 0.1);
+            --success: #2857a7;
+        }
+
+        .total-questions-badge {
+            display: inline-block;
+            background-color: var(--success);
+            color: #fff;
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-weight: bold;
+            margin-top: 10px;
+            font-size: 0.9em;
         }
 
         body {
@@ -114,8 +126,10 @@
                     <i class="fa-solid fa-atom"></i>
                 </div>
                 <div>
-                    <h1 class="text-xl md:text-2xl font-bold tracking-wide text-white drop-shadow-md">ฟิสิกส์ ม.6 บทที่ 16 เรื่องความร้อนและแก๊ส</h1>
-                    <p class="text-xs md:text-sm text-indigo-200">รายวิชา ฟิสิกส์ 5 รหัสวิชา ว33205 โรงเรียนห้องสอนศึกษา ในพระอุปถัมภ์ฯ</p>
+                    <h1 class="text-xl md:text-2xl font-bold tracking-wide text-white drop-shadow-md">ฟิสิกส์ ม.6 บทที่
+                        16 เรื่องความร้อนและแก๊ส</h1>
+                    <p class="text-xs md:text-sm text-indigo-200">รายวิชา ฟิสิกส์ 5 รหัสวิชา ว33205 โรงเรียนห้องสอนศึกษา
+                        ในพระอุปถัมภ์ฯ</p>
                 </div>
             </div>
             <div class="hidden md:flex items-center gap-2">
@@ -130,7 +144,8 @@
             </div>
             <div class="w-full md:hidden flex items-center justify-between">
                 <span
-                    class="bg-slate-800/80 text-indigo-200 px-3 py-1.5 rounded-full text-[11px] font-semibold border border-slate-700">ว33205 ฟิสิกส์ 5</span>
+                    class="bg-slate-800/80 text-indigo-200 px-3 py-1.5 rounded-full text-[11px] font-semibold border border-slate-700">ว33205
+                    ฟิสิกส์ 5</span>
                 <button onclick="toggleMobileMenu()"
                     class="bg-white/10 hover:bg-white/20 px-3 py-2 rounded-lg text-sm transition"
                     aria-label="Toggle menu">
@@ -740,6 +755,9 @@
             </div>
 
             <!-- Mode Selector -->
+            <div id="total-questions-display" class="total-questions-badge">
+                ข้อสอบในคลัง : <span id="total-count">0</span> ข้อ
+            </div>
             <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 <button onclick="startPracticeMode('16-3-1')" id="btn-prac-16-3-1"
                     class="p-4 bg-white hover:bg-sky-50 text-slate-800 rounded-xl border border-slate-200 flex items-center gap-4 transition text-left shadow-sm hover:shadow">
@@ -817,19 +835,21 @@
                     <div id="prac-numeric-zone" class="space-y-4">
                         <div class="grid grid-cols-1 gap-4">
                             <div id="prac-input-zone-1">
-                                <label id="lbl-prac-input-1"
-                                    class="block text-xs font-bold text-slate-600 mb-1">คำตอบ 1:</label>
+                                <label id="lbl-prac-input-1" class="block text-xs font-bold text-slate-600 mb-1">คำตอบ
+                                    1:</label>
                                 <input type="text" autocomplete="off" id="prac-input-val1"
                                     placeholder="เช่น 2.4e-21 หรือ 500"
                                     class="w-full px-4 py-3 rounded-xl border-2 border-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 text-center font-mono text-lg transition">
                             </div>
                             <div id="prac-input-zone-2" class="hidden">
-                                <label id="lbl-prac-input-2" class="block text-xs font-bold text-slate-600 mb-1">คำตอบ 2:</label>
+                                <label id="lbl-prac-input-2" class="block text-xs font-bold text-slate-600 mb-1">คำตอบ
+                                    2:</label>
                                 <input type="text" autocomplete="off" id="prac-input-val2"
                                     class="w-full px-4 py-3 rounded-xl border-2 border-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 text-center font-mono text-lg transition">
                             </div>
                             <div id="prac-input-zone-3" class="hidden">
-                                <label id="lbl-prac-input-3" class="block text-xs font-bold text-slate-600 mb-1">คำตอบ 3:</label>
+                                <label id="lbl-prac-input-3" class="block text-xs font-bold text-slate-600 mb-1">คำตอบ
+                                    3:</label>
                                 <input type="text" autocomplete="off" id="prac-input-val3"
                                     class="w-full px-4 py-3 rounded-xl border-2 border-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 text-center font-mono text-lg transition">
                             </div>
@@ -1885,19 +1905,19 @@
             const v2 = document.getElementById('prac-input-val2').value.trim();
             const v3 = document.getElementById('prac-input-val3').value.trim();
 
-            if (!v1 || 
-                (template.type === 'numeric_double' && !v2) || 
+            if (!v1 ||
+                (template.type === 'numeric_double' && !v2) ||
                 (template.type === 'numeric_triple' && (!v2 || !v3))) {
                 triggerAlert("กรอกไม่ครบ", "ระบุคำตอบให้ครบก่อนตรวจครับ", "fa-circle-question", "bg-amber-100 text-amber-600");
                 return;
             }
 
             const c1 = isNumericAnswerCorrect(v1, instance.answersRaw[0]);
-            const c2 = (template.type === 'numeric_double' || template.type === 'numeric_triple') 
-                ? isNumericAnswerCorrect(v2, instance.answersRaw[1]) 
+            const c2 = (template.type === 'numeric_double' || template.type === 'numeric_triple')
+                ? isNumericAnswerCorrect(v2, instance.answersRaw[1])
                 : true;
-            const c3 = (template.type === 'numeric_triple') 
-                ? isNumericAnswerCorrect(v3, instance.answersRaw[2]) 
+            const c3 = (template.type === 'numeric_triple')
+                ? isNumericAnswerCorrect(v3, instance.answersRaw[2])
                 : true;
             showPracticeFeedback(c1 && c2 && c3, instance.explanation());
         }
@@ -2253,6 +2273,11 @@
                     }
                 } catch (e) { sessionStorage.removeItem(EXAM_STATE_KEY); }
             }
+
+            // นับจำนวนโจทย์ทั้งหมดใน array QUESTION_TEMPLATES
+            const totalQuestions = QUESTION_TEMPLATES.length;
+            // อัปเดตตัวเลขไปยัง HTML
+            document.getElementById('total-count').innerText = totalQuestions;
         };
     </script>
 </body>
