@@ -1,0 +1,82 @@
+:root {
+    --ink: #1e293b;
+    --muted: #64748b;
+    --paper: rgba(255, 255, 255, 0.95);
+    --line: rgba(30, 41, 59, 0.1);
+    --success: #2857a7;
+}
+
+.total-questions-badge {
+    display: inline-block;
+    background-color: var(--success);
+    color: #fff;
+    padding: 5px 15px;
+    border-radius: 20px;
+    font-weight: bold;
+    margin-top: 10px;
+    font-size: 0.9em;
+}
+
+body {
+    font-family: 'Prompt', 'Sarabun', sans-serif;
+    color: var(--ink);
+    background:
+        linear-gradient(135deg, rgba(139, 92, 246, 0.08), transparent 30%),
+        linear-gradient(225deg, rgba(14, 165, 233, 0.08), transparent 35%),
+        repeating-linear-gradient(0deg, rgba(30, 41, 59, 0.02) 0 1px, transparent 1px 30px),
+        repeating-linear-gradient(90deg, rgba(30, 41, 59, 0.02) 0 1px, transparent 1px 30px),
+        #f8fafc;
+    text-rendering: optimizeLegibility;
+}
+
+html.exam-locked,
+body.exam-locked {
+    overscroll-behavior-y: none;
+}
+
+.math-font {
+    font-family: 'Sarabun', sans-serif;
+}
+
+header {
+    background: linear-gradient(135deg, #0f172a 0%, #312e81 50%, #1e1b4b 100%) !important;
+    box-shadow: 0 10px 25px rgba(15, 23, 42, 0.15);
+}
+
+button {
+    -webkit-tap-highlight-color: transparent;
+    transition: all 150ms ease;
+}
+
+button:active {
+    transform: translateY(2px);
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: #f1f5f9;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+}
+
+@keyframes slideRight {
+    0% {
+        left: -10%;
+    }
+
+    100% {
+        left: 110%;
+    }
+}
