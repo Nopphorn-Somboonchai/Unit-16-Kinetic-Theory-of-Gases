@@ -18,13 +18,14 @@ const AppState = {
     // Exam State
     currentExamQuestions: [],
     examTimerInterval: null,
-    examTimeRemaining: 600,
-    examDurationSeconds: 600,
+    examTimeRemaining: 900,
+    examDurationSeconds: 900,
     examStartTimestamp: null,
     examDeadlineTimestamp: null,
     examIsActive: false,
     examSubmissionInProgress: false,
     examStudentInfo: {},
+    examSessionSeed: null,
     examExitGuardEnabled: false,
 
     // Simulation State (Canvas & Timer refs)
@@ -98,7 +99,7 @@ function triggerAlert(title, message, iconClass = 'fa-info', colorClass = 'bg-sl
     const m = document.getElementById('modal-alert');
     const c = document.getElementById('modal-alert-card');
     const i = document.getElementById('modal-alert-icon');
-    
+
     if (m && c && i) {
         document.getElementById('modal-alert-title').innerText = title;
         document.getElementById('modal-alert-msg').innerText = message;
@@ -242,7 +243,7 @@ function initGasPressureSim() {
         let tempText = "ปกติ (300 K)";
         if (currentSpeed > 3) tempText = "ร้อนมาก";
         else if (currentSpeed < 1.5) tempText = "เย็น";
-        
+
         if (lblS && lblS.innerText !== tempText) lblS.innerText = tempText;
 
         // P ~ N * v^2 
@@ -357,24 +358,35 @@ function calculateVrms() {
 // --- Dynamic Question Templates (16.3 Kinetic Theory) ---
 class SeededRNG {
     constructor(seedStr) {
-        let hash = 0;
-        for (let i = 0; i < seedStr.length; i++) hash = (hash * 31 + seedStr.charCodeAt(i)) | 0;
-        this.seed = hash || 1;
+        // ไม่ใช้ seedStr อีกต่อไปเพื่อเปลี่ยนเป็นการสุ่มแบบ non-deterministic
     }
     random() {
-        let t = this.seed += 0x6D2B79F5;
-        t = Math.imul(t ^ (t >>> 15), t | 1);
-        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        return Math.random();
     }
     shuffle(array) {
         const arr = [...array];
         for (let i = arr.length - 1; i > 0; i--) {
-            const j = Math.floor(this.random() * (i + 1));
+            const j = Math.floor(Math.random() * (i + 1));
             [arr[i], arr[j]] = [arr[j], arr[i]];
         }
         return arr;
     }
+}
+
+// --- Non-Deterministic Random Helpers for Question Variables ---
+// ใช้สำหรับสุ่มตัวแปรแบบ non-deterministic แล้วนำเลขที่นักเรียนมาบวกกับตัวแปรนั้น
+function normalizeStudentNumber(n) {
+    const parsed = parseInt(n, 10);
+    return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function getSeededRandomBase(questionId, studentNumber, min, max, step = 1, sessionSeed = '') {
+    const steps = Math.floor((max - min) / step);
+    return min + Math.floor(Math.random() * (steps + 1)) * step;
+}
+
+function randomBasePlusStudentNumber(questionId, studentNumber, min, max, step = 1, sessionSeed = '') {
+    return getSeededRandomBase(questionId, studentNumber, min, max, step, sessionSeed) + normalizeStudentNumber(studentNumber);
 }
 
 const QUESTION_TEMPLATES = [
@@ -441,13 +453,20 @@ const QUESTION_TEMPLATES = [
         id: '16_3_1_calc_p', topic: '16.3.1', type: 'numeric_single',
         title: 'คำนวณความดันจากความหนาแน่นและอัตราเร็ว RMS',
         inputs: [{ label: 'ความดันแก๊ส (kPa):' }],
-        text: (p) => `แก๊สไนโตรเจนมีความหนาแน่น \\(${p.rho.toFixed(2)}\\text{ kg/m}^3\\) และมีอัตราเร็วอาร์เอ็มเอส (\\(v_{rms}\\)) เท่ากับ \\(${p.vrms}\\text{ m/s}\\) ความดันของแก๊สนี้มีค่ากี่กิโลพาสคัล (kPa)`,
-        generate: (r) => {
-            const rho = r ? 0.8 + (r % 10) * 0.1 : 1.2;
-            const vrms = r ? 400 + r * 5 : 500;
+        text: (p) => `แก๊สไนโตรเจนมีความหนาแน่น \\(${p.rho.toFixed(2)}\\text{ kg/m}^3\\) และมีอัตราเร็วอาร์เอ็มเอส (\\(v_{rms}\\)) เท่ากับ \\(${p.r ? `(${p.vrms_base} + \ ${p.r})` : p.vrms}\\text{ m/s}\\) ความดันของแก๊สนี้มีค่ากี่กิโลพาสคัล (kPa)`,
+        generate: (r, sessionSeed) => {
+            // สุ่มเฉพาะตัวแปร vrms แล้วบวกเลขที่นักเรียนเข้าไป ส่วน rho คงที่
+            const rho = 1.20;
+            const vrms_base = r ? getSeededRandomBase('16_3_1_calc_p_vrms', r, 380, 520, 10, sessionSeed) : 500;
+            const vrms = r ? (vrms_base + r) : 500;
             const P = (1 / 3) * rho * vrms * vrms;
             const P_kPa = P / 1000;
-            return { params: { rho, vrms }, answers: [P_kPa.toFixed(1), P_kPa.toFixed(2), Math.round(P_kPa).toString()], answersRaw: [P_kPa], explanation: () => `จากสมการความดันของแก๊ส: \\( P = \\frac{1}{3}\\rho v_{rms}^2 \\) <br>แทนค่า: \\( P = \\frac{1}{3}(${rho.toFixed(2)})(${vrms})^2 \\) <br> \\( P = \\frac{1}{3}(${rho.toFixed(2)})(${vrms * vrms}) = ${P.toFixed(1)}\\text{ Pa} \\) <br> แปลงเป็นหน่วยกิโลพาสคัล (kPa) โดยหารด้วย 1000: <br> \\( P = \\frac{${P.toFixed(1)}}{1000} \\approx ${P_kPa.toFixed(2)}\\text{ kPa} \\)` };
+            return {
+                params: { rho, vrms, vrms_base, r },
+                answers: [P_kPa.toFixed(1), P_kPa.toFixed(2), Math.round(P_kPa).toString()],
+                answersRaw: [P_kPa],
+                explanation: () => `จากสมการความดันของแก๊ส: \\( P = \\frac{1}{3}\\rho v_{rms}^2 \\) <br>แทนค่า: \\( P = \\frac{1}{3}(${rho.toFixed(2)})(${r ? `(${vrms_base} + \ ${r})` : vrms})^2 \\) <br> \\( P = \\frac{1}{3}(${rho.toFixed(2)})(${vrms})^2 = ${P.toFixed(1)}\\text{ Pa} \\) <br> แปลงเป็นหน่วยกิโลพาสคัล (kPa) โดยหารด้วย 1000: <br> \\( P = \\frac{${P.toFixed(1)}}{1000} \\approx ${P_kPa.toFixed(2)}\\text{ kPa} \\)`
+            };
         }
     },
 
@@ -456,12 +475,19 @@ const QUESTION_TEMPLATES = [
         id: '16_3_2_ek1', topic: '16.3.2', type: 'numeric_single',
         title: 'คำนวณพลังงานจลน์เฉลี่ย',
         inputs: [{ label: 'พลังงานจลน์เฉลี่ย $E_{k}$ :' }],
-        text: (p) => `แก๊สฮีเลียม (He) อุณหภูมิ \\(${p.T}\\text{ K}\\) จะมีพลังงานจลน์เฉลี่ยต่อโมเลกุลเท่าใด ในหน่วย \\(\\times 10^{-21} \\text{ J}\\) (กำหนด \\(k_B = 1.38 \\times 10^{-23}\\text{ J/K}\\))`,
-        generate: (r) => {
-            const T = r ? 300 + r * 15 : 300;
+        text: (p) => `แก๊สฮีเลียม (He) อุณหภูมิ \\(${p.r ? `(${p.T_base} + \ ${p.r})` : p.T}\\text{ K}\\) จะมีพลังงานจลน์เฉลี่ยต่อโมเลกุลเท่าใด ในหน่วย \\(\\times 10^{-21} \\text{ J}\\) (กำหนด \\(k_B = 1.38 \\times 10^{-23}\\text{ J/K}\\))`,
+        generate: (r, sessionSeed) => {
+            // สุ่มเฉพาะตัวแปร T แล้วบวกเลขที่นักเรียนเข้าไป
+            const T_base = r ? getSeededRandomBase('16_3_2_ek1_T', r, 280, 360, 10, sessionSeed) : 300;
+            const T = r ? (T_base + r) : 300;
             const Ek = 1.5 * 1.38e-23 * T;
             const Ek_coeff = Ek / 1e-21;
-            return { params: { T }, answers: [Ek_coeff.toFixed(2), (Ek_coeff.toFixed(2) + " × 10^-21")], answersRaw: [[Ek_coeff, Ek]], explanation: () => `จากสมการ \\( \\bar{E}_k = \\frac{3}{2}k_BT \\) <br>แทนค่า: \\( \\bar{E}_k = \\frac{3}{2}(1.38 \\times 10^{-23})(${T}) \\) <br> \\( \\bar{E}_k = ${Ek_coeff.toFixed(2)} \\times 10^{-21}\\text{ J} \\) <br> *(หมายเหตุ: พลังงานจลน์เฉลี่ยไม่ได้ขึ้นกับชนิดของแก๊ส ขึ้นกับ T เท่านั้น)*` };
+            return {
+                params: { T, T_base, r },
+                answers: [Ek_coeff.toFixed(2), (Ek_coeff.toFixed(2) + " × 10^-21")],
+                answersRaw: [[Ek_coeff, Ek]],
+                explanation: () => `จากสมการ \\( \\bar{E}_k = \\frac{3}{2}k_BT \\) <br>แทนค่า: \\( \\bar{E}_k = \\frac{3}{2}(1.38 \\times 10^{-23})(${r ? `(${T_base} + \ ${r})` : T}) \\) <br> \\( \\bar{E}_k = \\frac{3}{2}(1.38 \\times 10^{-23})(${T}) = ${Ek_coeff.toFixed(2)} \\times 10^{-21}\\text{ J} \\) <br> *(หมายเหตุ: พลังงานจลน์เฉลี่ยไม่ได้ขึ้นกับชนิดของแก๊ส ขึ้นกับ T เท่านั้น)*`
+            };
         }
     },
     {
@@ -480,34 +506,42 @@ const QUESTION_TEMPLATES = [
         id: '16_3_2_internalE_pv', topic: '16.3.2', type: 'numeric_single',
         title: 'พลังงานภายในระบบจากความดันและปริมาตร',
         inputs: [{ label: 'พลังงานภายใน (Joule):' }],
-        text: (p) => `แก๊สอุดมคติบรรจุอยู่ในภาชนะปิดขนาด \\(${p.V.toFixed(1)}\\text{ m}^3\\) มีความดัน \\(${p.P_kPa.toFixed(1)}\\text{ kPa}\\) พลังงานภายในระบบ (U) ของแก๊สนี้มีค่ากี่จูล`,
-        generate: (r) => {
-            const V = r ? (2 + (r % 5) * 0.5) : 3.0;
-            const P_kPa = r ? 100 + r * 3 : 150.0;
+        text: (p) => `แก๊สอุดมคติบรรจุอยู่ในภาชนะปิดขนาด \\(${p.V.toFixed(1)}\\text{ m}^3\\) มีความดัน \\(${p.r ? `(${p.P_kPa_base} + \ ${p.r})` : p.P_kPa.toFixed(1)}\\text{ kPa}\\) พลังงานภายในระบบ (U) ของแก๊สนี้มีค่ากี่จูล`,
+        generate: (r, sessionSeed) => {
+            // สุ่มเฉพาะตัวแปรความดัน P_kPa แล้วบวกเลขที่นักเรียนเข้าไป ส่วน V คงที่
+            const V = 3.0;
+            const P_kPa_base = r ? getSeededRandomBase('16_3_2_internalE_pv_P', r, 90, 180, 10, sessionSeed) : 150.0;
+            const P_kPa = r ? (P_kPa_base + r) : 150.0;
             const P = P_kPa * 1000;
             const U = 1.5 * P * V;
-            return { params: { V, P_kPa }, answers: [Math.round(U).toString(), U.toFixed(1)], answersRaw: [U], explanation: () => `พลังงานภายในระบบ (U) สำหรับแก๊สอุดมคติ หาได้จากสมการ: <br> \\( U = \\frac{3}{2}PV \\) <br> **สิ่งสำคัญ:** ต้องแปลงความดันให้เป็นหน่วยพาสคัล (Pa) ก่อน: \\( P = ${P_kPa.toFixed(1)}\\text{ kPa} = ${P}\\text{ Pa} \\) <br> แทนค่า: \\( U = \\frac{3}{2}(${P})(${V.toFixed(1)}) = ${U.toFixed(1)}\\text{ J} \\)` };
+            return {
+                params: { V, P_kPa, P_kPa_base, r },
+                answers: [Math.round(U).toString(), U.toFixed(1)],
+                answersRaw: [U],
+                explanation: () => `พลังงานภายในระบบ (U) สำหรับแก๊สอุดมคติ หาได้จากสมการ: <br> \\( U = \\frac{3}{2}PV \\) <br> **สิ่งสำคัญ:** ต้องแปลงความดันให้เป็นหน่วยพาสคัล (Pa) ก่อน: \\( P = ${r ? `(${P_kPa_base} + \ ${r})` : P_kPa.toFixed(1)}\\text{ kPa} = ${P}\\text{ Pa} \\) <br> แทนค่า: \\( U = \\frac{3}{2}(${P})(${V.toFixed(1)}) = ${U.toFixed(1)}\\text{ J} \\)`
+            };
         }
     },
     {
         id: '16_3_2_ek_stp_distractor', topic: '16.3.2', type: 'numeric_single',
         title: 'คำนวณพลังงานจลน์เฉลี่ย (มีตัวลวง)',
         inputs: [{ label: 'พลังงานจลน์เฉลี่ย \\( \\bar{E}_k \\) (พิมพ์เฉพาะตัวเลขข้างหน้า \\( \\times 10^{-21} \\text{ J} \\)):' }],
-        text: (p) => `จงหาพลังงานจลน์เฉลี่ยของโมเลกุล${p.gas}ที่อุณหภูมิ \\(${p.t}\\) องศาเซลเซียส และความดัน \\(${p.p}\\) บรรยากาศ (ตอบเฉพาะตัวเลขสัมประสิทธิ์ข้างหน้า \\(\\times 10^{-21}\\text{ J}\\))`,
-        generate: (r) => {
-            const gases = ['ออกซิเจน', 'ไนโตรเจน', 'ไฮโดรเจน', 'คาร์บอนไดออกไซด์'];
-            const gas = r ? gases[r % 4] : 'ออกซิเจน';
-            const t = r ? (r % 3) * 27 : 0;
-            const p_atm = r ? 1 + (r % 3) : 1;
+        text: (p) => `จงหาพลังงานจลน์เฉลี่ยของโมเลกุล${p.gas}ที่อุณหภูมิ \\(${p.r ? `(${p.t_base} + \ ${p.r})` : p.t}\\) องศาเซลเซียส และความดัน \\(${p.p}\\) บรรยากาศ (ตอบเฉพาะตัวเลขสัมประสิทธิ์ข้างหน้า \\(\\times 10^{-21}\\text{ J}\\))`,
+        generate: (r, sessionSeed) => {
+            // สุ่มเฉพาะตัวแปรอุณหภูมิ t แล้วบวกเลขที่นักเรียนเข้าไป ส่วนชนิดแก๊สและความดันเป็นตัวลวงคงที่
+            const gas = 'ออกซิเจน';
+            const t_base = r ? getSeededRandomBase('16_3_2_ek_stp_t', r, 0, 54, 9, sessionSeed) : 0;
+            const t = r ? (t_base + r) : 0;
+            const p_atm = 1;
             const T = t + 273;
             const Ek = 1.5 * 1.38e-23 * T;
             const Ek_coeff = Ek / 1e-21;
 
             return {
-                params: { gas, t, p: p_atm },
+                params: { gas, t, t_base, r, p: p_atm },
                 answers: [Ek_coeff.toFixed(2), Ek_coeff.toFixed(3)],
                 answersRaw: [Ek_coeff],
-                explanation: () => `จากสมการพลังงานจลน์เฉลี่ย \\( \\bar{E}_k = \\frac{3}{2}k_BT \\) <br><br> **💡 ข้อสังเกต:** พลังงานจลน์เฉลี่ยขึ้นอยู่กับ <strong>อุณหภูมิสัมบูรณ์ (T) เพียงอย่างเดียว</strong> ไม่ขึ้นกับชนิดของแก๊ส หรือ ความดัน (ความดัน ${p.p} บรรยากาศ เป็นเพียงตัวลวง) <br><br> แปลงอุณหภูมิ: \\( T = ${t} + 273 = ${T} \\text{ K} \\) <br> แทนค่า: \\( \\bar{E}_k = \\frac{3}{2}(1.38 \\times 10^{-23})(${T}) \\) <br> \\( \\bar{E}_k = ${Ek_coeff.toFixed(2)} \\times 10^{-21}\\text{ J} \\)`
+                explanation: () => `จากสมการพลังงานจลน์เฉลี่ย \\( \\bar{E}_k = \\frac{3}{2}k_BT \\) <br><br> **💡 ข้อสังเกต:** พลังงานจลน์เฉลี่ยขึ้นอยู่กับ <strong>อุณหภูมิสัมบูรณ์ (T) เพียงอย่างเดียว</strong> ไม่ขึ้นกับชนิดของแก๊ส หรือ ความดัน (ความดัน ${p_atm} บรรยากาศ เป็นเพียงตัวลวง) <br><br> แปลงอุณหภูมิ: \\( T = ${r ? `(${t_base} + \ ${r})` : t} + 273 = ${T} \\text{ K} \\) <br> แทนค่า: \\( \\bar{E}_k = \\frac{3}{2}(1.38 \\times 10^{-23})(${T}) \\) <br> \\( \\bar{E}_k = ${Ek_coeff.toFixed(2)} \\times 10^{-21}\\text{ J} \\)`
             };
         }
     },
@@ -515,22 +549,24 @@ const QUESTION_TEMPLATES = [
         id: '16_3_2_ek_double_temp', topic: '16.3.2', type: 'numeric_single',
         title: 'การเปลี่ยนแปลงพลังงานจลน์เฉลี่ยกับอุณหภูมิ',
         inputs: [{ label: 'อุณหภูมิใหม่ (K หรือ °C):' }],
-        text: (p) => `แก๊สชนิดหนึ่งบรรจุในภาชนะปิดที่อุณหภูมิ \\(${p.t1}^\\circ\\text{C}\\) จะต้องทำให้แก๊สนี้มีอุณหภูมิเป็นเท่าใด (ตอบหน่วยเคลวิน) จึงจะมีพลังงานจลน์เฉลี่ยต่อโมเลกุลเป็น ${p.n} เท่าของค่าเดิม`,
-        generate: (r) => {
-            const t1 = r ? (r % 3) * 27 : 0;
-            const n = r ? 2 + (r % 3) : 2;
+        text: (p) => `แก๊สชนิดหนึ่งบรรจุในภาชนะปิดที่อุณหภูมิ \\(${p.r ? `(${p.t1_base} + \ ${p.r})` : p.t1}^\\circ\\text{C}\\) จะต้องทำให้แก๊สนี้มีอุณหภูมิเป็นเท่าใด (ตอบหน่วยเคลวิน) จึงจะมีพลังงานจลน์เฉลี่ยต่อโมเลกุลเป็น ${p.n} เท่าของค่าเดิม`,
+        generate: (r, sessionSeed) => {
+            // สุ่มเฉพาะตัวแปรอุณหภูมิเริ่มต้น t1 แล้วบวกเลขที่นักเรียนเข้าไป ส่วนจำนวนเท่าคงที่
+            const t1_base = r ? getSeededRandomBase('16_3_2_ek_double_temp_t1', r, 0, 54, 9, sessionSeed) : 0;
+            const t1 = r ? (t1_base + r) : 0;
+            const n = 2;
             const T1 = t1 + 273;
             const T2 = n * T1;
             const t2_celsius = T2 - 273;
 
             return {
-                params: { t1, n },
+                params: { t1, t1_base, r, n },
                 answers: [T2.toString()],
                 answersRaw: [T2],
                 explanation: () => `พลังงานจลน์เฉลี่ยแปรผันตรงกับอุณหภูมิสัมบูรณ์ (เคลวิน) ตามสมการ \\( \\bar{E}_k = \\frac{3}{2}k_BT \\) นั่นคือ \\( \\bar{E}_k \\propto T \\)<br>
             ดังนั้น \\( \\frac{(\\bar{E}_k)_2}{(\\bar{E}_k)_1} = \\frac{T_2}{T_1} \\)<br>
             โจทย์ต้องการให้ \\( (\\bar{E}_k)_2 = ${n}(\\bar{E}_k)_1 \\) จะได้ \\( \\frac{T_2}{T_1} = ${n} \\)<br>
-            แปลงอุณหภูมิเริ่มต้น: \\( T_1 = ${t1} + 273 = ${T1} \\text{ K} \\)<br>
+            แปลงอุณหภูมิเริ่มต้น: \\( T_1 = ${r ? `(${t1_base} + \ ${r})` : t1} + 273 = ${T1} \\text{ K} \\)<br>
             แทนค่าหา T ใหม่: \\( T_2 = ${n} \\times ${T1} = ${T2} \\text{ K} \\) <br>
             (หรือเท่ากับ \\( ${T2} - 273 = ${t2_celsius}^\\circ\\text{C} \\))`
             };
@@ -540,20 +576,22 @@ const QUESTION_TEMPLATES = [
         id: '16_3_2_internalE_argon', topic: '16.3.2', type: 'numeric_single',
         title: 'พลังงานภายในของแก๊สอาร์กอน',
         inputs: [{ label: 'พลังงานภายใน (Joule):' }],
-        text: (p) => `พลังงานภายในของแก๊สอาร์กอนจำนวน \\(${p.n.toFixed(2)}\\text{ โมล}\\) ที่ \\(${p.t}\\) องศาเซลเซียส มีค่าเท่าใด (กำหนดให้ \\( R = 8.31 \\text{ J/(mol K)} \\))`,
-        generate: (r) => {
-            const n = r ? (1 + (r % 4) * 0.5) : 1.00;
-            const t = r ? (27 + (r % 3) * 10) : 27;
+        text: (p) => `พลังงานภายในของแก๊สอาร์กอนจำนวน \\(${p.n.toFixed(2)}\\text{ โมล}\\) ที่ \\(${p.r ? `(${p.t_base} + \ ${p.r})` : p.t}\\) องศาเซลเซียส มีค่าเท่าใด (กำหนดให้ \\( R = 8.31 \\text{ J/(mol K)} \\))`,
+        generate: (r, sessionSeed) => {
+            // สุ่มเฉพาะตัวแปรอุณหภูมิ t แล้วบวกเลขที่นักเรียนเข้าไป ส่วนจำนวนโมลคงที่
+            const n = 1.00;
+            const t_base = r ? getSeededRandomBase('16_3_2_internalE_argon_t', r, 20, 60, 10, sessionSeed) : 27;
+            const t = r ? (t_base + r) : 27;
             const T = t + 273;
             const U = 1.5 * n * 8.31 * T;
             return {
-                params: { n, t },
+                params: { n, t, t_base, r },
                 answers: [Math.round(U).toString(), U.toFixed(1), U.toFixed(2)],
                 answersRaw: [U],
                 explanation: () => `
               พลังงานภายในระบบ (U) ของแก๊สอะตอมเดี่ยว (เช่น อาร์กอน) หาได้จากสมการ: <br>
               \\( U = \\frac{3}{2}nRT \\) <br>
-              แปลงอุณหภูมิเป็นหน่วยเคลวิน: \\( T = ${t} + 273 = ${T}\\text{ K} \\) <br>
+              แปลงอุณหภูมิเป็นหน่วยเคลวิน: \\( T = ${r ? `(${t_base} + \ ${r})` : t} + 273 = ${T}\\text{ K} \\) <br>
               แทนค่า: \\( U = \\frac{3}{2}(${n.toFixed(2)})(8.31)(${T}) \\)<br>
               \\( U = ${U.toFixed(1)}\\text{ J} \\)
             `
@@ -566,12 +604,19 @@ const QUESTION_TEMPLATES = [
         id: '16_3_3_vrms_calc', topic: '16.3.3', type: 'numeric_single',
         title: 'คำนวณอัตราเร็ว RMS (แก๊สออกซิเจน)',
         inputs: [{ label: 'อัตราเร็ว \\( v_{rms} \\) (m/s):' }],
-        text: (p) => `จงหาอัตราเร็วอาร์เอ็มเอส (\\( v_{rms} \\)) ของโมเลกุลแก๊สออกซิเจน (O₂) ที่อุณหภูมิ \\(${p.T}\\text{ K}\\) กำหนดให้มวลโมลาร์ของ O₂ = \\(32 \\text{ g/mol}\\) และ \\(R = 8.31 \\text{ J/(mol K)}\\)`,
-        generate: (r) => {
-            const T = r ? 250 + r * 8 : 300;
+        text: (p) => `จงหาอัตราเร็วอาร์เอ็มเอส (\\( v_{rms} \\)) ของโมเลกุลแก๊สออกซิเจน (O₂) ที่อุณหภูมิ \\(${p.r ? `(${p.T_base} + \ ${p.r})` : p.T}\\text{ K}\\) กำหนดให้มวลโมลาร์ของ O₂ = \\(32 \\text{ g/mol}\\) และ \\(R = 8.31 \\text{ J/(mol K)}\\)`,
+        generate: (r, sessionSeed) => {
+            // สุ่มเฉพาะตัวแปร T แล้วบวกเลขที่นักเรียนเข้าไป
+            const T_base = r ? getSeededRandomBase('16_3_3_vrms_calc_T', r, 250, 360, 10, sessionSeed) : 300;
+            const T = r ? (T_base + r) : 300;
             const M_kg = 32 * 1e-3;
             const v = Math.sqrt((3 * 8.31 * T) / M_kg);
-            return { params: { T }, answers: [Math.round(v).toString(), v.toFixed(1), v.toFixed(2)], answersRaw: [v], explanation: () => `จากสมการ \\( v_{rms} = \\sqrt{\\frac{3RT}{M}} \\) <br> **สิ่งสำคัญ:** ต้องแปลง M เป็น kg/mol คือ \\(32 \\times 10^{-3}\\text{ kg/mol}\\) <br>แทนค่า: \\( v_{rms} = \\sqrt{\\frac{3(8.31)(${T})}{32 \\times 10^{-3}}} \\) <br> \\( v_{rms} = \\sqrt{\\frac{${(3 * 8.31 * T).toFixed(2)}}{0.032}} \\approx ${v.toFixed(2)}\\text{ m/s} \\)` };
+            return {
+                params: { T, T_base, r },
+                answers: [Math.round(v).toString(), v.toFixed(1), v.toFixed(2)],
+                answersRaw: [v],
+                explanation: () => `จากสมการ \\( v_{rms} = \\sqrt{\\frac{3RT}{M}} \\) <br> **สิ่งสำคัญ:** ต้องแปลง M เป็น kg/mol คือ \\(32 \\times 10^{-3}\\text{ kg/mol}\\) <br>แทนค่า: \\( v_{rms} = \\sqrt{\\frac{3(8.31)(${r ? `(${T_base} + \ ${r})` : T})}{32 \\times 10^{-3}}} \\) <br> \\( v_{rms} = \\sqrt{\\frac{3(8.31)(${T})}{32 \\times 10^{-3}}} \\approx ${v.toFixed(2)}\\text{ m/s} \\)`
+            };
         }
     },
     {
@@ -590,11 +635,18 @@ const QUESTION_TEMPLATES = [
         id: '16_3_3_vrms_compare', topic: '16.3.3', type: 'numeric_single',
         title: 'เปรียบเทียบอัตราเร็ว RMS ของแก๊สสองชนิด',
         inputs: [{ label: 'อัตราเร็ว RMS ของแก๊สฮีเลียม (m/s):' }],
-        text: (p) => `ที่อุณหภูมิห้องเดียวกัน อัตราเร็ว RMS ของโมเลกุลแก๊สนีออน (Ne) เท่ากับ \\(${p.v_Ne}\\text{ m/s}\\) อัตราเร็ว RMS ของแก๊สฮีเลียม (He) จะมีค่ากี่เมตรต่อวินาที (กำหนดมวลโมเลกุล Ne = 20 g/mol, He = 4 g/mol)`,
-        generate: (r) => {
-            const v_Ne = r ? 300 + r * 5 : 400;
+        text: (p) => `ที่อุณหภูมิห้องเดียวกัน อัตราเร็ว RMS ของโมเลกุลแก๊สนีออน (Ne) เท่ากับ \\(${p.r ? `(${p.v_Ne_base} + \ ${p.r})` : p.v_Ne}\\text{ m/s}\\) อัตราเร็ว RMS ของแก๊สฮีเลียม (He) จะมีค่ากี่เมตรต่อวินาที (กำหนดมวลโมเลกุล Ne = 20 g/mol, He = 4 g/mol)`,
+        generate: (r, sessionSeed) => {
+            // สุ่มเฉพาะตัวแปร v_Ne แล้วบวกเลขที่นักเรียนเข้าไป
+            const v_Ne_base = r ? getSeededRandomBase('16_3_3_vrms_compare_vNe', r, 300, 460, 10, sessionSeed) : 400;
+            const v_Ne = r ? (v_Ne_base + r) : 400;
             const v_He = v_Ne * Math.sqrt(5);
-            return { params: { v_Ne }, answers: [Math.round(v_He).toString(), v_He.toFixed(1), v_He.toFixed(2)], answersRaw: [v_He], explanation: () => `จากสมการอัตราเร็ว RMS: \\( v_{rms} = \\sqrt{\\frac{3RT}{M}} \\) <br> ที่อุณหภูมิ \\(T\\) เท่ากัน จะได้ว่า \\( v_{rms} \\propto \\frac{1}{\\sqrt{M}} \\) <br> เปรียบเทียบระหว่างแก๊สฮีเลียม (He) และนีออน (Ne): <br> \\( \\frac{v_{He}}{v_{Ne}} = \\sqrt{\\frac{M_{Ne}}{M_{He}}} = \\sqrt{\\frac{20}{4}} = \\sqrt{5} \\approx 2.236 \\) <br>  ดังนั้น: \\( v_{He} = v_{Ne} \\times \\sqrt{5} = ${v_Ne} \\times 2.236 = ${v_He.toFixed(2)}\\text{ m/s} \\)` };
+            return {
+                params: { v_Ne, v_Ne_base, r },
+                answers: [Math.round(v_He).toString(), v_He.toFixed(1), v_He.toFixed(2)],
+                answersRaw: [v_He],
+                explanation: () => `จากสมการอัตราเร็ว RMS: \\( v_{rms} = \\sqrt{\\frac{3RT}{M}} \\) <br> ที่อุณหภูมิ \\(T\\) เท่ากัน จะได้ว่า \\( v_{rms} \\propto \\frac{1}{\\sqrt{M}} \\) <br> เปรียบเทียบระหว่างแก๊สฮีเลียม (He) และนีออน (Ne): <br> \\( \\frac{v_{He}}{v_{Ne}} = \\sqrt{\\frac{M_{Ne}}{M_{He}}} = \\sqrt{\\frac{20}{4}} = \\sqrt{5} \\approx 2.236 \\) <br>  ดังนั้น: \\( v_{He} = ${r ? `(${v_Ne_base} + \ ${r})` : v_Ne} \\times \\sqrt{5} = ${v_Ne} \\times 2.236 = ${v_He.toFixed(2)}\\text{ m/s} \\)`
+            };
         }
     },
 
@@ -605,8 +657,9 @@ const QUESTION_TEMPLATES = [
         inputs: [{ label: 'พลังงานรวม (Joule):' }],
         text: (p) => `แก๊สฮีเลียม (He) จำนวน \\(${p.n.toFixed(1)}\\text{ mol}\\) บรรจุในภาชนะปิดที่อุณหภูมิ \\(${p.t}^\\circ\\text{C}\\) พลังงานจลน์รวมทั้งหมดของแก๊สนี้ (พลังงานภายในระบบ, U) มีค่ากี่จูล $\\left(กำหนด R = 8.31 J/mol K\\right)$`,
         generate: (r) => {
-            const n = r ? (1 + r * 0.1) : 2;
-            const t = r ? (10 + r) : 27;
+            // สุ่มเฉพาะตัวแปรอุณหภูมิ t แล้วบวกเลขที่นักเรียนเข้าไป ส่วนจำนวนโมลคงที่
+            const n = 2.0;
+            const t = r ? randomBasePlusStudentNumber('16_3_mix_internalE_t', r, 10, 60, 10) : 27;
             const T = t + 273;
             const U = 1.5 * n * 8.31 * T;
             return { params: { n, t }, answers: [Math.round(U).toString(), U.toFixed(1)], answersRaw: [U], explanation: () => `พลังงานจลน์รวมของแก๊สทั้งหมด (U) หาได้จาก: <br> \\( U = \\frac{3}{2}nRT \\) <br> แปลง T = ${t} + 273 = ${T} K <br> แทนค่า: \\( U = \\frac{3}{2}(${n.toFixed(1)})(8.31)(${T}) = ${U.toFixed(1)}\\text{ J} \\)` };
@@ -621,7 +674,8 @@ const QUESTION_TEMPLATES = [
         ],
         text: (p) => `จงหาอัตราเร็วอาร์เอ็มเอส (\\( v_{rms} \\)) และพลังงานจลน์เฉลี่ย (\\( \\bar{E}_k \\)) ของโมเลกุลแก๊สไนโตรเจน (N₂) ที่อุณหภูมิ \\(${p.T}\\text{ K}\\) <br><br> <span class="text-sm text-slate-500">(กำหนดมวลโมลาร์ N₂ = 28 g/mol, \\(R = 8.31 \\text{ J/(mol K)}\\), \\(k_B = 1.38 \\times 10^{-23} \\text{ J/K}\\))</span>`,
         generate: (r) => {
-            const T = r ? 280 + (r % 5) * 10 : 280;
+            // สุ่มเฉพาะตัวแปร T แล้วบวกเลขที่นักเรียนเข้าไป
+            const T = r ? randomBasePlusStudentNumber('16_3_mix_vrms_ek_T', r, 280, 360, 10) : 280;
             const M_kg = 28 * 1e-3;
             const v = Math.sqrt((3 * 8.31 * T) / M_kg);
             const Ek = 1.5 * 1.38e-23 * T;
@@ -653,7 +707,8 @@ const QUESTION_TEMPLATES = [
         ],
         text: (p) => `จงหาอัตราเร็วอาร์เอ็มเอส (\\( v_{rms} \\)) และพลังงานจลน์เฉลี่ย (\\( \\bar{E}_k \\)) ของอะตอมนีออน (Ne) ที่อุณหภูมิ \\(${p.T}\\text{ เคลวิน}\\) <br><br> <span class="text-sm text-slate-500">(กำหนดมวลโมลาร์ของนีออน = \\(20 \\times 10^{-3} \\text{ kg/mol}\\), \\(R = 8.31 \\text{ J/(mol K)}\\), \\(k_B = 1.38 \\times 10^{-23} \\text{ J/K}\\))</span>`,
         generate: (r) => {
-            const T = r ? 400 + (r % 6) * 10 : 450;
+            // สุ่มเฉพาะตัวแปร T แล้วบวกเลขที่นักเรียนเข้าไป
+            const T = r ? randomBasePlusStudentNumber('16_3_mix_vrms_ek_neon_T', r, 400, 480, 10) : 450;
             const M_kg = 20 * 1e-3;
             const v = Math.sqrt((3 * 8.31 * T) / M_kg);
             const Ek = 1.5 * 1.38e-23 * T;
@@ -783,7 +838,7 @@ function checkPracticeAnswer() {
     const v1El = document.getElementById('prac-input-val1');
     const v2El = document.getElementById('prac-input-val2');
     const v3El = document.getElementById('prac-input-val3');
-    
+
     const v1 = v1El ? v1El.value.trim() : '';
     const v2 = v2El ? v2El.value.trim() : '';
     const v3 = v3El ? v3El.value.trim() : '';
@@ -832,7 +887,6 @@ function startExamProcess() {
     const nameInput = document.getElementById('exam-student-name');
     const classSelect = document.getElementById('exam-student-class');
     const noInput = document.getElementById('exam-student-no');
-    const durationInput = document.getElementById('exam-duration-minutes');
 
     if (!nameInput || !classSelect || !noInput) return;
 
@@ -846,39 +900,80 @@ function startExamProcess() {
         return;
     }
 
-    AppState.examDurationSeconds = (parseInt(durationInput.value) || 10) * 60;
+    AppState.examDurationSeconds = 15 * 60;
     AppState.examStudentInfo = { name, class: cls, number: num };
 
-    const examRNG = new SeededRNG(num);
+    const sessionSeed = Math.random().toString();
+    AppState.examSessionSeed = sessionSeed;
+
+    const examRNG = new SeededRNG(sessionSeed);
 
     const q16_3_1 = QUESTION_TEMPLATES.filter(q => q.topic === '16.3.1');
     const q16_3_2 = QUESTION_TEMPLATES.filter(q => q.topic === '16.3.2');
     const q16_3_3 = QUESTION_TEMPLATES.filter(q => q.topic === '16.3.3' && q.id !== '16_3_mix_vrms_ek');
 
-    const shuffled_1 = examRNG.shuffle(q16_3_1);
-    const shuffled_2 = examRNG.shuffle(q16_3_2);
-    const shuffled_3 = examRNG.shuffle(q16_3_3);
+    const choice_1 = q16_3_1.filter(q => q.type === 'choice');
+    const num_1 = q16_3_1.filter(q => q.type !== 'choice');
 
-    const selectedTemplates = [
-        shuffled_1[0],
-        shuffled_2[0],
-        shuffled_2[1],
-        shuffled_3[0],
-        shuffled_3[1]
-    ];
+    const choice_2 = q16_3_2.filter(q => q.type === 'choice');
+    const num_2 = q16_3_2.filter(q => q.type !== 'choice');
+
+    const choice_3 = q16_3_3.filter(q => q.type === 'choice');
+    const num_3 = q16_3_3.filter(q => q.type !== 'choice');
+
+    const s_choice_1 = examRNG.shuffle(choice_1);
+    const s_num_1 = examRNG.shuffle(num_1);
+
+    const s_choice_2 = examRNG.shuffle(choice_2);
+    const s_num_2 = examRNG.shuffle(num_2);
+
+    const s_choice_3 = examRNG.shuffle(choice_3);
+    const s_num_3 = examRNG.shuffle(num_3);
+
+    const choiceTopic = examRNG.shuffle([1, 2, 3])[0];
+
+    let selectedTemplates = [];
+    if (choiceTopic === 1) {
+        selectedTemplates = [
+            s_choice_1[0],
+            s_num_2[0],
+            s_num_2[1],
+            s_num_3[0],
+            s_num_3[1]
+        ];
+    } else if (choiceTopic === 2) {
+        selectedTemplates = [
+            s_num_1[0],
+            s_choice_2[0],
+            s_num_2[0],
+            s_num_3[0],
+            s_num_3[1]
+        ];
+    } else { // choiceTopic === 3
+        selectedTemplates = [
+            s_num_1[0],
+            s_num_2[0],
+            s_num_2[1],
+            s_choice_3[0],
+            s_num_3[0]
+        ];
+    }
 
     AppState.currentExamQuestions = selectedTemplates.map(template => {
-        const instance = template.generate(R);
+        const instance = template.generate(R, sessionSeed);
         const choices = template.type === 'choice' ? examRNG.shuffle(template.choices) : [];
         return {
             id: template.id, topic: template.topic, type: template.type, title: template.title,
-            text: template.text(instance.params), inputs: template.inputs || [], choices: choices
+            text: template.text(instance.params), inputs: template.inputs || [], choices: choices,
+            answers: instance.answers,
+            answersRaw: instance.answersRaw,
+            explanationText: instance.explanation()
         };
     });
 
     const lblUserInfo = document.getElementById('lbl-exam-user-info');
     if (lblUserInfo) lblUserInfo.innerText = `${name} (ม.6/${cls} เลขที่ ${num})`;
-    
+
     renderExamLiveDOM();
 
     AppState.examStartTimestamp = Date.now();
@@ -888,11 +983,12 @@ function startExamProcess() {
     AppState.examSubmissionInProgress = false;
 
     sessionStorage.setItem(EXAM_STATE_KEY, JSON.stringify({
-        examQuestions: AppState.currentExamQuestions, 
-        studentInfo: AppState.examStudentInfo, 
-        examStartTimestamp: AppState.examStartTimestamp, 
-        examDeadlineTimestamp: AppState.examDeadlineTimestamp, 
-        examDurationSeconds: AppState.examDurationSeconds
+        examQuestions: AppState.currentExamQuestions,
+        studentInfo: AppState.examStudentInfo,
+        examStartTimestamp: AppState.examStartTimestamp,
+        examDeadlineTimestamp: AppState.examDeadlineTimestamp,
+        examDurationSeconds: AppState.examDurationSeconds,
+        sessionSeed: sessionSeed
     }));
 
     setupExamLocks();
@@ -912,11 +1008,11 @@ function releaseExamLocks() {
     window.removeEventListener('beforeunload', handleExamBeforeUnload);
 }
 
-function handleExamBeforeUnload(e) { 
-    if (AppState.examIsActive) { 
-        e.preventDefault(); 
-        e.returnValue = ''; 
-    } 
+function handleExamBeforeUnload(e) {
+    if (AppState.examIsActive) {
+        e.preventDefault();
+        e.returnValue = '';
+    }
 }
 
 function renderExamLiveDOM() {
@@ -977,7 +1073,7 @@ function startExamTimer() {
     AppState.examTimerInterval = setInterval(() => {
         if (!AppState.examIsActive) return;
         AppState.examTimeRemaining = Math.max(0, Math.ceil((AppState.examDeadlineTimestamp - Date.now()) / 1000));
-        
+
         const timerDisplay = document.getElementById('exam-timer-display');
         if (timerDisplay) {
             timerDisplay.innerText = formatExamTime(AppState.examTimeRemaining);
@@ -1021,7 +1117,7 @@ function confirmSubmitExam() {
     const m = document.getElementById('modal-confirm');
     const c = document.getElementById('modal-confirm-card');
     const msgEl = document.getElementById('modal-confirm-msg');
-    
+
     if (m && c && msgEl) {
         msgEl.innerText = msg;
         m.classList.remove('hidden');
@@ -1054,29 +1150,28 @@ function submitExam(timeExpired = false) {
     let total_score = 0;
     const gradedResults = [];
     const R = parseInt(AppState.examStudentInfo.number) || 1;
+    const sessionSeed = AppState.examSessionSeed || '';
 
     AppState.currentExamQuestions.forEach((q, idx) => {
         const userAns = answers[idx];
-        const template = QUESTION_TEMPLATES.find(t => t.id === q.id);
-        const dynamicCalc = template.generate(R);
 
         let isCorrect = false;
         if (q.type === 'choice') {
-            isCorrect = userAns === dynamicCalc.answers[0];
+            isCorrect = userAns === q.answers[0];
         } else if (q.type === 'numeric_single') {
-            isCorrect = userAns && isNumericAnswerCorrect(userAns[0], dynamicCalc.answersRaw[0]);
+            isCorrect = userAns && isNumericAnswerCorrect(userAns[0], q.answersRaw[0]);
         } else if (q.type === 'numeric_double') {
             isCorrect = userAns &&
-                isNumericAnswerCorrect(userAns[0], dynamicCalc.answersRaw[0]) &&
-                isNumericAnswerCorrect(userAns[1], dynamicCalc.answersRaw[1]);
+                isNumericAnswerCorrect(userAns[0], q.answersRaw[0]) &&
+                isNumericAnswerCorrect(userAns[1], q.answersRaw[1]);
         }
 
         const score = isCorrect ? 2.0 : 0.0;
         total_score += score;
         gradedResults.push({
             idx, isCorrect, score, userAns,
-            expectedAnswers: dynamicCalc.answers,
-            explanationText: dynamicCalc.explanation()
+            expectedAnswers: q.answers,
+            explanationText: q.explanationText
         });
     });
 
@@ -1084,11 +1179,11 @@ function submitExam(timeExpired = false) {
     const timeStr = `${Math.floor(elapsed / 60)} นาที ${elapsed % 60} วินาที`;
 
     const payload = {
-        score: total_score, 
-        timeTaken: timeStr, 
+        score: total_score,
+        timeTaken: timeStr,
         studentInfo: AppState.examStudentInfo,
-        gradedResults, 
-        examQuestions: AppState.currentExamQuestions, 
+        gradedResults,
+        examQuestions: AppState.currentExamQuestions,
         date: new Date().toLocaleDateString('th-TH')
     };
     localStorage.setItem('last_exam_results_16_3', JSON.stringify(payload));
@@ -1105,7 +1200,7 @@ function renderExamResults(data) {
     const timeEl = document.getElementById('lbl-res-time-elapsed');
     const dateEl = document.getElementById('lbl-res-finished-at');
     const scoreEl = document.getElementById('lbl-res-total-score');
-    
+
     if (nameEl) nameEl.innerText = data.studentInfo.name;
     if (metaEl) metaEl.innerText = `ม.6/${data.studentInfo.class} เลขที่ ${data.studentInfo.number}`;
     if (timeEl) timeEl.innerText = data.timeTaken;
@@ -1129,7 +1224,7 @@ function renderExamResults(data) {
     const tbody = document.getElementById('exam-result-tbody');
     const sols = document.getElementById('exam-solutions-container');
     if (tbody && sols) {
-        tbody.innerHTML = ''; 
+        tbody.innerHTML = '';
         sols.innerHTML = '';
 
         data.gradedResults.forEach((grad, i) => {
@@ -1227,11 +1322,12 @@ window.onload = () => {
                 AppState.examStudentInfo = s.studentInfo;
                 AppState.examDeadlineTimestamp = s.examDeadlineTimestamp;
                 AppState.examDurationSeconds = s.examDurationSeconds;
+                AppState.examSessionSeed = s.sessionSeed || '';
                 AppState.examIsActive = true;
-                
+
                 const lblUserInfo = document.getElementById('lbl-exam-user-info');
                 if (lblUserInfo) lblUserInfo.innerText = `${s.studentInfo.name} (ม.6/${s.studentInfo.class})`;
-                
+
                 renderExamLiveDOM();
                 setupExamLocks();
                 showSection('exam-live');
@@ -1239,8 +1335,8 @@ window.onload = () => {
             } else {
                 sessionStorage.removeItem(EXAM_STATE_KEY);
             }
-        } catch (e) { 
-            sessionStorage.removeItem(EXAM_STATE_KEY); 
+        } catch (e) {
+            sessionStorage.removeItem(EXAM_STATE_KEY);
         }
     }
 
@@ -1249,3 +1345,4 @@ window.onload = () => {
         totalCountEl.innerText = QUESTION_TEMPLATES.length;
     }
 };
+
