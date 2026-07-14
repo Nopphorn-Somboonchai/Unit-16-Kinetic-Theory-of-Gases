@@ -42,7 +42,7 @@ function formatSci(num, sigFigs = 3) {
 }
 
 function cleanAndParseNumber(str) {
-    let clean = str.trim().toLowerCase().replace(/\\times/g, 'e').replace(/x/g, 'e').replace(/\*/g, 'e').replace(/10\^/g, '').replace(/\{/g, '').replace(/\}/g, '').replace(/\s+/g, '');
+    let clean = str.trim().toLowerCase().replace(/,/g, '').replace(/\\times/g, 'e').replace(/x/g, 'e').replace(/\*/g, 'e').replace(/10\^/g, '').replace(/\{/g, '').replace(/\}/g, '').replace(/\s+/g, '');
     if (clean.includes('e')) {
         const parts = clean.split('e');
         return parseFloat(parts[0]) * Math.pow(10, parseFloat(parts[1]));
@@ -355,10 +355,13 @@ function calculateVrms() {
     }
 }
 
-// --- Dynamic Question Templates (16.3 Kinetic Theory) ---
+// >>> EDIT START: PhysicsRandomizer & Randomized Question Templates <<<
+// ระบบควบคุมการสุ่มตัวแปร โจทย์ และประวัติ localStorage สำหรับทฤษฎีจลน์ของแก๊ส (ป้องกัน Hydration Mismatch และ SSR ใน Next.js)
+
 class SeededRNG {
     constructor(seedStr) {
-        // ไม่ใช้ seedStr อีกต่อไปเพื่อเปลี่ยนเป็นการสุ่มแบบ non-deterministic
+        // เก็บ seedStr ไว้สุ่มตามโครงสร้างเดิมของระบบข้อสอบ
+        this.seed = seedStr;
     }
     random() {
         return Math.random();
@@ -373,20 +376,108 @@ class SeededRNG {
     }
 }
 
-// --- Non-Deterministic Random Helpers for Question Variables ---
-// ใช้สำหรับสุ่มตัวแปรแบบ non-deterministic แล้วนำเลขที่นักเรียนมาบวกกับตัวแปรนั้น
+// ยูทิลิตี้สำหรับช่วยการสุ่มแบบทดสอบได้และป้องกันการสุ่มซ้ำ
+const PhysicsRandomizer = {
+    // 8. ห้ามเข้าถึง localStorage ระหว่าง SSR
+    isBrowser() {
+        return typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
+    },
+
+    // 4. ดึงประวัติชุดตัวเลขที่ใช้แล้วจาก localStorage
+    getUsedKeys() {
+        if (!this.isBrowser()) return [];
+        try {
+            const data = localStorage.getItem('kinetic_theory_used_keys');
+            return data ? JSON.parse(data) : [];
+        } catch (e) {
+            console.error('Error reading localStorage kinetic_theory_used_keys', e);
+            return [];
+        }
+    },
+
+    // 4. บันทึกประวัติลง localStorage ไม่เกิน 100 ชุด
+    saveUsedKey(key) {
+        if (!this.isBrowser()) return;
+        try {
+            let keys = this.getUsedKeys();
+            const index = keys.indexOf(key);
+            if (index > -1) {
+                keys.splice(index, 1);
+            }
+            keys.push(key);
+            if (keys.length > 100) {
+                keys.shift(); // ลบชุดเก่าสุดออกเมื่อเกิน 100 ชุด
+            }
+            localStorage.setItem('kinetic_theory_used_keys', JSON.stringify(keys));
+        } catch (e) {
+            console.error('Error saving used key to localStorage', e);
+        }
+    },
+
+    // 5. สร้าง Unique Key จากค่าตัวแปรสุ่มทั้งหมดเพื่อตรวจสอบการซ้ำ
+    createUniqueKey(questionId, params) {
+        const sortedKeys = Object.keys(params).sort();
+        const paramPairs = sortedKeys.map(k => {
+            const val = params[k];
+            // แปลงเป็นจุดทศนิยม 4 ตำแหน่งเพื่อป้องกันความคลาดเคลื่อนของ float
+            const valStr = typeof val === 'number' ? val.toFixed(4) : String(val);
+            return `${k}=${valStr}`;
+        });
+        return `${questionId}:${paramPairs.join(',')}`;
+    },
+
+    // สุ่มค่าตัวเลขในช่วงที่ระบุ
+    getRandomValue(min, max, step = 1) {
+        const steps = Math.floor((max - min) / step);
+        return min + Math.floor(Math.random() * (steps + 1)) * step;
+    },
+
+    // 6. ฟังก์ชันจัดการสุ่มซ้ำ (ไม่เกิน 100 attempts) และป้องกัน infinite loop
+    generate(questionId, r, generatorFn, maxAttempts = 100) {
+        // หากไม่มีการสุ่ม (เช่น โหมด Standard ที่ค่า r เป็น null) ให้ bypass ข้ามการเช็คซ้ำเพื่อความรวดเร็ว
+        if (r === null || r === undefined) {
+            return generatorFn();
+        }
+
+        let attempts = 0;
+        let candidate = null;
+        let uniqueKey = '';
+        const usedKeys = this.getUsedKeys();
+
+        while (attempts < maxAttempts) {
+            attempts++;
+            candidate = generatorFn();
+            
+            // 2. ป้องกันค่าตัวแปรสุ่มภายในโจทย์เดียวกันซ้ำกัน (ไม่นับค่าคงที่ที่เป็นตัวเลขคงตัว เช่น rho, n, V, p)
+            const numericValues = Object.entries(candidate.params)
+                .filter(([k, v]) => typeof v === 'number' && !['r', 'rho', 'V', 'n', 'p'].includes(k))
+                .map(([k, v]) => v);
+            const hasDuplicateValues = new Set(numericValues).size !== numericValues.length;
+
+            if (hasDuplicateValues) {
+                continue; // ถ้าตัวแปรชนกันในโจทย์เดียวกัน ให้สุ่มใหม่
+            }
+
+            uniqueKey = this.createUniqueKey(questionId, candidate.params);
+
+            // 3. ชุดตัวแปรทั้งหมดต้องไม่เหมือนรอบก่อนหน้า (เช็คความซ้ำกับ localStorage)
+            if (!usedKeys.includes(uniqueKey)) {
+                break; // ได้ตัวแปรใหม่ที่ไม่ซ้ำ
+            }
+        }
+
+        // บันทึกประวัติชุดตัวแปรใหม่
+        if (uniqueKey) {
+            this.saveUsedKey(uniqueKey);
+        }
+        return candidate;
+    }
+};
+
+// 13. ปรับฟังก์ชันการแปลงเลขที่นักเรียน
 function normalizeStudentNumber(n) {
     const parsed = parseInt(n, 10);
     return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function getSeededRandomBase(questionId, studentNumber, min, max, step = 1, sessionSeed = '') {
-    const steps = Math.floor((max - min) / step);
-    return min + Math.floor(Math.random() * (steps + 1)) * step;
-}
-
-function randomBasePlusStudentNumber(questionId, studentNumber, min, max, step = 1, sessionSeed = '') {
-    return getSeededRandomBase(questionId, studentNumber, min, max, step, sessionSeed) + normalizeStudentNumber(studentNumber);
 }
 
 const QUESTION_TEMPLATES = [
@@ -450,23 +541,27 @@ const QUESTION_TEMPLATES = [
         })
     },
     {
+        // 11. คำนวณคำตอบใหม่ทุกครั้งจากค่าที่สุ่ม ไม่ใช้คำตอบเดิม
+        // 12. ตรวจสอบให้ชุดข้อมูล (โจทย์, ข้อมูล, เฉลย, คำตอบตรวจ) สอดคล้องกันทั้งหมด
         id: '16_3_1_calc_p', topic: '16.3.1', type: 'numeric_single',
         title: 'คำนวณความดันจากความหนาแน่นและอัตราเร็ว RMS',
         inputs: [{ label: 'ความดันแก๊ส (kPa):' }],
         text: (p) => `แก๊สไนโตรเจนมีความหนาแน่น \\(${p.rho.toFixed(2)}\\text{ kg/m}^3\\) และมีอัตราเร็วอาร์เอ็มเอส (\\(v_{rms}\\)) เท่ากับ \\(${p.r ? `(${p.vrms_base} + \ ${p.r})` : p.vrms}\\text{ m/s}\\) ความดันของแก๊สนี้มีค่ากี่กิโลพาสคัล (kPa)`,
-        generate: (r, sessionSeed) => {
-            // สุ่มเฉพาะตัวแปร vrms แล้วบวกเลขที่นักเรียนเข้าไป ส่วน rho คงที่
-            const rho = 1.20;
-            const vrms_base = r ? getSeededRandomBase('16_3_1_calc_p_vrms', r, 380, 520, 10, sessionSeed) : 500;
-            const vrms = r ? (vrms_base + r) : 500;
-            const P = (1 / 3) * rho * vrms * vrms;
-            const P_kPa = P / 1000;
-            return {
-                params: { rho, vrms, vrms_base, r },
-                answers: [P_kPa.toFixed(1), P_kPa.toFixed(2), Math.round(P_kPa).toString()],
-                answersRaw: [P_kPa],
-                explanation: () => `จากสมการความดันของแก๊ส: \\( P = \\frac{1}{3}\\rho v_{rms}^2 \\) <br>แทนค่า: \\( P = \\frac{1}{3}(${rho.toFixed(2)})(${r ? `(${vrms_base} + \ ${r})` : vrms})^2 \\) <br> \\( P = \\frac{1}{3}(${rho.toFixed(2)})(${vrms})^2 = ${P.toFixed(1)}\\text{ Pa} \\) <br> แปลงเป็นหน่วยกิโลพาสคัล (kPa) โดยหารด้วย 1000: <br> \\( P = \\frac{${P.toFixed(1)}}{1000} \\approx ${P_kPa.toFixed(2)}\\text{ kPa} \\)`
-            };
+        generate: (r) => {
+            return PhysicsRandomizer.generate('16_3_1_calc_p', r, () => {
+                const rho = 1.20;
+                const studentNo = normalizeStudentNumber(r);
+                const vrms_base = r ? PhysicsRandomizer.getRandomValue(380, 520, 10) : 500;
+                const vrms = r ? (vrms_base + studentNo) : 500;
+                const P = (1 / 3) * rho * vrms * vrms;
+                const P_kPa = P / 1000;
+                return {
+                    params: { rho, vrms, vrms_base, r: r ? studentNo : null },
+                    answers: [P_kPa.toFixed(1), P_kPa.toFixed(2), Math.round(P_kPa).toString()],
+                    answersRaw: [P_kPa],
+                    explanation: () => `จากสมการความดันของแก๊ส: \\( P = \\frac{1}{3}\\rho v_{rms}^2 \\) <br>แทนค่า: \\( P = \\frac{1}{3}(${rho.toFixed(2)})(${r ? `(${vrms_base} + \ ${studentNo})` : vrms})^2 \\) <br> \\( P = \\frac{1}{3}(${rho.toFixed(2)})(${vrms})^2 = ${P.toFixed(1)}\\text{ Pa} \\) <br> แปลงเป็นหน่วยกิโลพาสคัล (kPa) โดยหารด้วย 1000: <br> \\( P = \\frac{${P.toFixed(1)}}{1000} \\approx ${P_kPa.toFixed(2)}\\text{ kPa} \\)`
+                };
+            });
         }
     },
 
@@ -476,18 +571,20 @@ const QUESTION_TEMPLATES = [
         title: 'คำนวณพลังงานจลน์เฉลี่ย',
         inputs: [{ label: 'พลังงานจลน์เฉลี่ย $E_{k}$ :' }],
         text: (p) => `แก๊สฮีเลียม (He) อุณหภูมิ \\(${p.r ? `(${p.T_base} + \ ${p.r})` : p.T}\\text{ K}\\) จะมีพลังงานจลน์เฉลี่ยต่อโมเลกุลเท่าใด ในหน่วย \\(\\times 10^{-21} \\text{ J}\\) (กำหนด \\(k_B = 1.38 \\times 10^{-23}\\text{ J/K}\\))`,
-        generate: (r, sessionSeed) => {
-            // สุ่มเฉพาะตัวแปร T แล้วบวกเลขที่นักเรียนเข้าไป
-            const T_base = r ? getSeededRandomBase('16_3_2_ek1_T', r, 280, 360, 10, sessionSeed) : 300;
-            const T = r ? (T_base + r) : 300;
-            const Ek = 1.5 * 1.38e-23 * T;
-            const Ek_coeff = Ek / 1e-21;
-            return {
-                params: { T, T_base, r },
-                answers: [Ek_coeff.toFixed(2), (Ek_coeff.toFixed(2) + " × 10^-21")],
-                answersRaw: [[Ek_coeff, Ek]],
-                explanation: () => `จากสมการ \\( \\bar{E}_k = \\frac{3}{2}k_BT \\) <br>แทนค่า: \\( \\bar{E}_k = \\frac{3}{2}(1.38 \\times 10^{-23})(${r ? `(${T_base} + \ ${r})` : T}) \\) <br> \\( \\bar{E}_k = \\frac{3}{2}(1.38 \\times 10^{-23})(${T}) = ${Ek_coeff.toFixed(2)} \\times 10^{-21}\\text{ J} \\) <br> *(หมายเหตุ: พลังงานจลน์เฉลี่ยไม่ได้ขึ้นกับชนิดของแก๊ส ขึ้นกับ T เท่านั้น)*`
-            };
+        generate: (r) => {
+            return PhysicsRandomizer.generate('16_3_2_ek1', r, () => {
+                const studentNo = normalizeStudentNumber(r);
+                const T_base = r ? PhysicsRandomizer.getRandomValue(280, 360, 10) : 300;
+                const T = r ? (T_base + studentNo) : 300;
+                const Ek = 1.5 * 1.38e-23 * T;
+                const Ek_coeff = Ek / 1e-21;
+                return {
+                    params: { T, T_base, r: r ? studentNo : null },
+                    answers: [Ek_coeff.toFixed(2), (Ek_coeff.toFixed(2) + " × 10^-21")],
+                    answersRaw: [[Ek_coeff, Ek]],
+                    explanation: () => `จากสมการ \\( \\bar{E}_k = \\frac{3}{2}k_BT \\) <br>แทนค่า: \\( \\bar{E}_k = \\frac{3}{2}(1.38 \\times 10^{-23})(${r ? `(${T_base} + \ ${studentNo})` : T}) \\) <br> \\( \\bar{E}_k = \\frac{3}{2}(1.38 \\times 10^{-23})(${T}) = ${Ek_coeff.toFixed(2)} \\times 10^{-21}\\text{ J} \\) <br> *(หมายเหตุ: พลังงานจลน์เฉลี่ยไม่ได้ขึ้นกับชนิดของแก๊ส ขึ้นกับ T เท่านั้น)*`
+                };
+            });
         }
     },
     {
@@ -507,19 +604,21 @@ const QUESTION_TEMPLATES = [
         title: 'พลังงานภายในระบบจากความดันและปริมาตร',
         inputs: [{ label: 'พลังงานภายใน (Joule):' }],
         text: (p) => `แก๊สอุดมคติบรรจุอยู่ในภาชนะปิดขนาด \\(${p.V.toFixed(1)}\\text{ m}^3\\) มีความดัน \\(${p.r ? `(${p.P_kPa_base} + \ ${p.r})` : p.P_kPa.toFixed(1)}\\text{ kPa}\\) พลังงานภายในระบบ (U) ของแก๊สนี้มีค่ากี่จูล`,
-        generate: (r, sessionSeed) => {
-            // สุ่มเฉพาะตัวแปรความดัน P_kPa แล้วบวกเลขที่นักเรียนเข้าไป ส่วน V คงที่
-            const V = 3.0;
-            const P_kPa_base = r ? getSeededRandomBase('16_3_2_internalE_pv_P', r, 90, 180, 10, sessionSeed) : 150.0;
-            const P_kPa = r ? (P_kPa_base + r) : 150.0;
-            const P = P_kPa * 1000;
-            const U = 1.5 * P * V;
-            return {
-                params: { V, P_kPa, P_kPa_base, r },
-                answers: [Math.round(U).toString(), U.toFixed(1)],
-                answersRaw: [U],
-                explanation: () => `พลังงานภายในระบบ (U) สำหรับแก๊สอุดมคติ หาได้จากสมการ: <br> \\( U = \\frac{3}{2}PV \\) <br> **สิ่งสำคัญ:** ต้องแปลงความดันให้เป็นหน่วยพาสคัล (Pa) ก่อน: \\( P = ${r ? `(${P_kPa_base} + \ ${r})` : P_kPa.toFixed(1)}\\text{ kPa} = ${P}\\text{ Pa} \\) <br> แทนค่า: \\( U = \\frac{3}{2}(${P})(${V.toFixed(1)}) = ${U.toFixed(1)}\\text{ J} \\)`
-            };
+        generate: (r) => {
+            return PhysicsRandomizer.generate('16_3_2_internalE_pv', r, () => {
+                const V = 3.0;
+                const studentNo = normalizeStudentNumber(r);
+                const P_kPa_base = r ? PhysicsRandomizer.getRandomValue(90, 180, 10) : 150.0;
+                const P_kPa = r ? (P_kPa_base + studentNo) : 150.0;
+                const P = P_kPa * 1000;
+                const U = 1.5 * P * V;
+                return {
+                    params: { V, P_kPa, P_kPa_base, r: r ? studentNo : null },
+                    answers: [Math.round(U).toString(), U.toFixed(1)],
+                    answersRaw: [U],
+                    explanation: () => `พลังงานภายในระบบ (U) สำหรับแก๊สอุดมคติ หาได้จากสมการ: <br> \\( U = \\frac{3}{2}PV \\) <br> **สิ่งสำคัญ:** ต้องแปลงความดันให้เป็นหน่วยพาสคัล (Pa) ก่อน: \\( P = ${r ? `(${P_kPa_base} + \ ${studentNo})` : P_kPa.toFixed(1)}\\text{ kPa} = ${P}\\text{ Pa} \\) <br> แทนค่า: \\( U = \\frac{3}{2}(${P})(${V.toFixed(1)}) = ${U.toFixed(1)}\\text{ J} \\)`
+                };
+            });
         }
     },
     {
@@ -527,22 +626,23 @@ const QUESTION_TEMPLATES = [
         title: 'คำนวณพลังงานจลน์เฉลี่ย (มีตัวลวง)',
         inputs: [{ label: 'พลังงานจลน์เฉลี่ย \\( \\bar{E}_k \\) (พิมพ์เฉพาะตัวเลขข้างหน้า \\( \\times 10^{-21} \\text{ J} \\)):' }],
         text: (p) => `จงหาพลังงานจลน์เฉลี่ยของโมเลกุล${p.gas}ที่อุณหภูมิ \\(${p.r ? `(${p.t_base} + \ ${p.r})` : p.t}\\) องศาเซลเซียส และความดัน \\(${p.p}\\) บรรยากาศ (ตอบเฉพาะตัวเลขสัมประสิทธิ์ข้างหน้า \\(\\times 10^{-21}\\text{ J}\\))`,
-        generate: (r, sessionSeed) => {
-            // สุ่มเฉพาะตัวแปรอุณหภูมิ t แล้วบวกเลขที่นักเรียนเข้าไป ส่วนชนิดแก๊สและความดันเป็นตัวลวงคงที่
-            const gas = 'ออกซิเจน';
-            const t_base = r ? getSeededRandomBase('16_3_2_ek_stp_t', r, 0, 54, 9, sessionSeed) : 0;
-            const t = r ? (t_base + r) : 0;
-            const p_atm = 1;
-            const T = t + 273;
-            const Ek = 1.5 * 1.38e-23 * T;
-            const Ek_coeff = Ek / 1e-21;
-
-            return {
-                params: { gas, t, t_base, r, p: p_atm },
-                answers: [Ek_coeff.toFixed(2), Ek_coeff.toFixed(3)],
-                answersRaw: [Ek_coeff],
-                explanation: () => `จากสมการพลังงานจลน์เฉลี่ย \\( \\bar{E}_k = \\frac{3}{2}k_BT \\) <br><br> **💡 ข้อสังเกต:** พลังงานจลน์เฉลี่ยขึ้นอยู่กับ <strong>อุณหภูมิสัมบูรณ์ (T) เพียงอย่างเดียว</strong> ไม่ขึ้นกับชนิดของแก๊ส หรือ ความดัน (ความดัน ${p_atm} บรรยากาศ เป็นเพียงตัวลวง) <br><br> แปลงอุณหภูมิ: \\( T = ${r ? `(${t_base} + \ ${r})` : t} + 273 = ${T} \\text{ K} \\) <br> แทนค่า: \\( \\bar{E}_k = \\frac{3}{2}(1.38 \\times 10^{-23})(${T}) \\) <br> \\( \\bar{E}_k = ${Ek_coeff.toFixed(2)} \\times 10^{-21}\\text{ J} \\)`
-            };
+        generate: (r) => {
+            return PhysicsRandomizer.generate('16_3_2_ek_stp_distractor', r, () => {
+                const gas = 'ออกซิเจน';
+                const studentNo = normalizeStudentNumber(r);
+                const t_base = r ? PhysicsRandomizer.getRandomValue(0, 54, 9) : 0;
+                const t = r ? (t_base + studentNo) : 0;
+                const p_atm = 1;
+                const T = t + 273;
+                const Ek = 1.5 * 1.38e-23 * T;
+                const Ek_coeff = Ek / 1e-21;
+                return {
+                    params: { gas, t, t_base, r: r ? studentNo : null, p: p_atm },
+                    answers: [Ek_coeff.toFixed(2), Ek_coeff.toFixed(3)],
+                    answersRaw: [Ek_coeff],
+                    explanation: () => `จากสมการพลังงานจลน์เฉลี่ย \\( \\bar{E}_k = \\frac{3}{2}k_BT \\) <br><br> **💡 ข้อสังเกต:** พลังงานจลน์เฉลี่ยขึ้นอยู่กับ <strong>อุณหภูมิสัมบูรณ์ (T) เพียงอย่างเดียว</strong> ไม่ขึ้นกับชนิดของแก๊ส หรือ ความดัน (ความดัน ${p_atm} บรรยากาศ เป็นเพียงตัวลวง) <br><br> แปลงอุณหภูมิ: \\( T = ${r ? `(${t_base} + \ ${studentNo})` : t} + 273 = ${T} \\text{ K} \\) <br> แทนค่า: \\( \\bar{E}_k = \\frac{3}{2}(1.38 \\times 10^{-23})(${T}) \\) <br> \\( \\bar{E}_k = ${Ek_coeff.toFixed(2)} \\times 10^{-21}\\text{ J} \\)`
+                };
+            });
         }
     },
     {
@@ -550,26 +650,27 @@ const QUESTION_TEMPLATES = [
         title: 'การเปลี่ยนแปลงพลังงานจลน์เฉลี่ยกับอุณหภูมิ',
         inputs: [{ label: 'อุณหภูมิใหม่ (K หรือ °C):' }],
         text: (p) => `แก๊สชนิดหนึ่งบรรจุในภาชนะปิดที่อุณหภูมิ \\(${p.r ? `(${p.t1_base} + \ ${p.r})` : p.t1}^\\circ\\text{C}\\) จะต้องทำให้แก๊สนี้มีอุณหภูมิเป็นเท่าใด (ตอบหน่วยเคลวิน) จึงจะมีพลังงานจลน์เฉลี่ยต่อโมเลกุลเป็น ${p.n} เท่าของค่าเดิม`,
-        generate: (r, sessionSeed) => {
-            // สุ่มเฉพาะตัวแปรอุณหภูมิเริ่มต้น t1 แล้วบวกเลขที่นักเรียนเข้าไป ส่วนจำนวนเท่าคงที่
-            const t1_base = r ? getSeededRandomBase('16_3_2_ek_double_temp_t1', r, 0, 54, 9, sessionSeed) : 0;
-            const t1 = r ? (t1_base + r) : 0;
-            const n = 2;
-            const T1 = t1 + 273;
-            const T2 = n * T1;
-            const t2_celsius = T2 - 273;
-
-            return {
-                params: { t1, t1_base, r, n },
-                answers: [T2.toString()],
-                answersRaw: [T2],
-                explanation: () => `พลังงานจลน์เฉลี่ยแปรผันตรงกับอุณหภูมิสัมบูรณ์ (เคลวิน) ตามสมการ \\( \\bar{E}_k = \\frac{3}{2}k_BT \\) นั่นคือ \\( \\bar{E}_k \\propto T \\)<br>
+        generate: (r) => {
+            return PhysicsRandomizer.generate('16_3_2_ek_double_temp', r, () => {
+                const studentNo = normalizeStudentNumber(r);
+                const t1_base = r ? PhysicsRandomizer.getRandomValue(0, 54, 9) : 0;
+                const t1 = r ? (t1_base + studentNo) : 0;
+                const n = 2;
+                const T1 = t1 + 273;
+                const T2 = n * T1;
+                const t2_celsius = T2 - 273;
+                return {
+                    params: { t1, t1_base, r: r ? studentNo : null, n },
+                    answers: [T2.toString()],
+                    answersRaw: [T2],
+                    explanation: () => `พลังงานจลน์เฉลี่ยแปรผันตรงกับอุณหภูมิสัมบูรณ์ (เคลวิน) ตามสมการ \\( \\bar{E}_k = \\frac{3}{2}k_BT \\) นั่นคือ \\( \\bar{E}_k \\propto T \\)<br>
             ดังนั้น \\( \\frac{(\\bar{E}_k)_2}{(\\bar{E}_k)_1} = \\frac{T_2}{T_1} \\)<br>
             โจทย์ต้องการให้ \\( (\\bar{E}_k)_2 = ${n}(\\bar{E}_k)_1 \\) จะได้ \\( \\frac{T_2}{T_1} = ${n} \\)<br>
-            แปลงอุณหภูมิเริ่มต้น: \\( T_1 = ${r ? `(${t1_base} + \ ${r})` : t1} + 273 = ${T1} \\text{ K} \\)<br>
+            แปลงอุณหภูมิเริ่มต้น: \\( T_1 = ${r ? `(${t1_base} + \ ${studentNo})` : t1} + 273 = ${T1} \\text{ K} \\)<br>
             แทนค่าหา T ใหม่: \\( T_2 = ${n} \\times ${T1} = ${T2} \\text{ K} \\) <br>
             (หรือเท่ากับ \\( ${T2} - 273 = ${t2_celsius}^\\circ\\text{C} \\))`
-            };
+                };
+            });
         }
     },
     {
@@ -577,25 +678,25 @@ const QUESTION_TEMPLATES = [
         title: 'พลังงานภายในของแก๊สอาร์กอน',
         inputs: [{ label: 'พลังงานภายใน (Joule):' }],
         text: (p) => `พลังงานภายในของแก๊สอาร์กอนจำนวน \\(${p.n.toFixed(2)}\\text{ โมล}\\) ที่ \\(${p.r ? `(${p.t_base} + \ ${p.r})` : p.t}\\) องศาเซลเซียส มีค่าเท่าใด (กำหนดให้ \\( R = 8.31 \\text{ J/(mol K)} \\))`,
-        generate: (r, sessionSeed) => {
-            // สุ่มเฉพาะตัวแปรอุณหภูมิ t แล้วบวกเลขที่นักเรียนเข้าไป ส่วนจำนวนโมลคงที่
-            const n = 1.00;
-            const t_base = r ? getSeededRandomBase('16_3_2_internalE_argon_t', r, 20, 60, 10, sessionSeed) : 27;
-            const t = r ? (t_base + r) : 27;
-            const T = t + 273;
-            const U = 1.5 * n * 8.31 * T;
-            return {
-                params: { n, t, t_base, r },
-                answers: [Math.round(U).toString(), U.toFixed(1), U.toFixed(2)],
-                answersRaw: [U],
-                explanation: () => `
-              พลังงานภายในระบบ (U) ของแก๊สอะตอมเดี่ยว (เช่น อาร์กอน) หาได้จากสมการ: <br>
+        generate: (r) => {
+            return PhysicsRandomizer.generate('16_3_2_internalE_argon', r, () => {
+                const n = 1.00;
+                const studentNo = normalizeStudentNumber(r);
+                const t_base = r ? PhysicsRandomizer.getRandomValue(20, 60, 10) : 27;
+                const t = r ? (t_base + studentNo) : 27;
+                const T = t + 273;
+                const U = 1.5 * n * 8.31 * T;
+                return {
+                    params: { n, t, t_base, r: r ? studentNo : null },
+                    answers: [Math.round(U).toString(), U.toFixed(1), U.toFixed(2)],
+                    answersRaw: [U],
+                    explanation: () => `พลังงานภายในระบบ (U) ของแก๊สอะตอมเดี่ยว (เช่น อาร์กอน) หาได้จากสมการ: <br>
               \\( U = \\frac{3}{2}nRT \\) <br>
-              แปลงอุณหภูมิเป็นหน่วยเคลวิน: \\( T = ${r ? `(${t_base} + \ ${r})` : t} + 273 = ${T}\\text{ K} \\) <br>
+              แปลงอุณหภูมิเป็นหน่วยเคลวิน: \\( T = ${r ? `(${t_base} + \ ${studentNo})` : t} + 273 = ${T}\\text{ K} \\) <br>
               แทนค่า: \\( U = \\frac{3}{2}(${n.toFixed(2)})(8.31)(${T}) \\)<br>
-              \\( U = ${U.toFixed(1)}\\text{ J} \\)
-            `
-            };
+              \\( U = ${U.toFixed(1)}\\text{ J} \\)`
+                };
+            });
         }
     },
 
@@ -605,18 +706,20 @@ const QUESTION_TEMPLATES = [
         title: 'คำนวณอัตราเร็ว RMS (แก๊สออกซิเจน)',
         inputs: [{ label: 'อัตราเร็ว \\( v_{rms} \\) (m/s):' }],
         text: (p) => `จงหาอัตราเร็วอาร์เอ็มเอส (\\( v_{rms} \\)) ของโมเลกุลแก๊สออกซิเจน (O₂) ที่อุณหภูมิ \\(${p.r ? `(${p.T_base} + \ ${p.r})` : p.T}\\text{ K}\\) กำหนดให้มวลโมลาร์ของ O₂ = \\(32 \\text{ g/mol}\\) และ \\(R = 8.31 \\text{ J/(mol K)}\\)`,
-        generate: (r, sessionSeed) => {
-            // สุ่มเฉพาะตัวแปร T แล้วบวกเลขที่นักเรียนเข้าไป
-            const T_base = r ? getSeededRandomBase('16_3_3_vrms_calc_T', r, 250, 360, 10, sessionSeed) : 300;
-            const T = r ? (T_base + r) : 300;
-            const M_kg = 32 * 1e-3;
-            const v = Math.sqrt((3 * 8.31 * T) / M_kg);
-            return {
-                params: { T, T_base, r },
-                answers: [Math.round(v).toString(), v.toFixed(1), v.toFixed(2)],
-                answersRaw: [v],
-                explanation: () => `จากสมการ \\( v_{rms} = \\sqrt{\\frac{3RT}{M}} \\) <br> **สิ่งสำคัญ:** ต้องแปลง M เป็น kg/mol คือ \\(32 \\times 10^{-3}\\text{ kg/mol}\\) <br>แทนค่า: \\( v_{rms} = \\sqrt{\\frac{3(8.31)(${r ? `(${T_base} + \ ${r})` : T})}{32 \\times 10^{-3}}} \\) <br> \\( v_{rms} = \\sqrt{\\frac{3(8.31)(${T})}{32 \\times 10^{-3}}} \\approx ${v.toFixed(2)}\\text{ m/s} \\)`
-            };
+        generate: (r) => {
+            return PhysicsRandomizer.generate('16_3_3_vrms_calc', r, () => {
+                const studentNo = normalizeStudentNumber(r);
+                const T_base = r ? PhysicsRandomizer.getRandomValue(250, 360, 10) : 300;
+                const T = r ? (T_base + studentNo) : 300;
+                const M_kg = 32 * 1e-3;
+                const v = Math.sqrt((3 * 8.31 * T) / M_kg);
+                return {
+                    params: { T, T_base, r: r ? studentNo : null },
+                    answers: [Math.round(v).toString(), v.toFixed(1), v.toFixed(2)],
+                    answersRaw: [v],
+                    explanation: () => `จากสมการ \\( v_{rms} = \\sqrt{\\frac{3RT}{M}} \\) <br> **สิ่งสำคัญ:** ต้องแปลง M เป็น kg/mol คือ \\(32 \\times 10^{-3}\\text{ kg/mol}\\) <br>แทนค่า: \\( v_{rms} = \\sqrt{\\frac{3(8.31)(${r ? `(${T_base} + \ ${studentNo})` : T})}{32 \\times 10^{-3}}} \\) <br> \\( v_{rms} = \\sqrt{\\frac{3(8.31)(${T})}{32 \\times 10^{-3}}} \\approx ${v.toFixed(2)}\\text{ m/s} \\)`
+                };
+            });
         }
     },
     {
@@ -629,24 +732,26 @@ const QUESTION_TEMPLATES = [
             'เท่าเดิม'
         ],
         text: () => `ถ้าเพิ่มอุณหภูมิสัมบูรณ์ของแก๊สในภาชนะปิดให้เป็น 2 เท่าของอุณหภูมิเดิม อัตราเร็ว RMS ของโมเลกุลแก๊สจะเปลี่ยนแปลงอย่างไร`,
-        generate: (r) => ({ params: {}, answers: ['เพิ่มขึ้นเป็น √2 เท่า (ประมาณ 1.414 เท่า)'], answersRaw: [0], explanation: () => `จากสมการ \\( v_{rms} = \\sqrt{\\frac{3RT}{M}} \\) จะเห็นว่า \\( v_{rms} \\propto \\sqrt{T} \\) <br> ดังนั้น ถ้า T กลายเป็น 2 เท่า \\( v_{rms} \\) ใหม่จะกลายเป็น \\( \\sqrt{2} \\) เท่าของค่าเดิม (ไม่ถึง 2 เท่าเพราะติดรากที่สอง)` })
+        generate: (r) => ({ params: {}, answers: ['เพิ่มขึ้นเป็น √2 เท่า (ประมาณ 1.414 เท่า)'], answersRaw: [0], explanation: () => `จากสมการ \\( v_{rms} = \\sqrt{\\frac{3RT}{M}} จะเห็นว่า \\( v_{rms} \\propto \\sqrt{T} \\) <br> ดังนั้น ถ้า T กลายเป็น 2 เท่า \\( v_{rms} \\) ใหม่จะกลายเป็น \\( \\sqrt{2} \\) เท่าของค่าเดิม (ไม่ถึง 2 เท่าเพราะติดรากที่สอง)` })
     },
     {
         id: '16_3_3_vrms_compare', topic: '16.3.3', type: 'numeric_single',
         title: 'เปรียบเทียบอัตราเร็ว RMS ของแก๊สสองชนิด',
         inputs: [{ label: 'อัตราเร็ว RMS ของแก๊สฮีเลียม (m/s):' }],
         text: (p) => `ที่อุณหภูมิห้องเดียวกัน อัตราเร็ว RMS ของโมเลกุลแก๊สนีออน (Ne) เท่ากับ \\(${p.r ? `(${p.v_Ne_base} + \ ${p.r})` : p.v_Ne}\\text{ m/s}\\) อัตราเร็ว RMS ของแก๊สฮีเลียม (He) จะมีค่ากี่เมตรต่อวินาที (กำหนดมวลโมเลกุล Ne = 20 g/mol, He = 4 g/mol)`,
-        generate: (r, sessionSeed) => {
-            // สุ่มเฉพาะตัวแปร v_Ne แล้วบวกเลขที่นักเรียนเข้าไป
-            const v_Ne_base = r ? getSeededRandomBase('16_3_3_vrms_compare_vNe', r, 300, 460, 10, sessionSeed) : 400;
-            const v_Ne = r ? (v_Ne_base + r) : 400;
-            const v_He = v_Ne * Math.sqrt(5);
-            return {
-                params: { v_Ne, v_Ne_base, r },
-                answers: [Math.round(v_He).toString(), v_He.toFixed(1), v_He.toFixed(2)],
-                answersRaw: [v_He],
-                explanation: () => `จากสมการอัตราเร็ว RMS: \\( v_{rms} = \\sqrt{\\frac{3RT}{M}} \\) <br> ที่อุณหภูมิ \\(T\\) เท่ากัน จะได้ว่า \\( v_{rms} \\propto \\frac{1}{\\sqrt{M}} \\) <br> เปรียบเทียบระหว่างแก๊สฮีเลียม (He) และนีออน (Ne): <br> \\( \\frac{v_{He}}{v_{Ne}} = \\sqrt{\\frac{M_{Ne}}{M_{He}}} = \\sqrt{\\frac{20}{4}} = \\sqrt{5} \\approx 2.236 \\) <br>  ดังนั้น: \\( v_{He} = ${r ? `(${v_Ne_base} + \ ${r})` : v_Ne} \\times \\sqrt{5} = ${v_Ne} \\times 2.236 = ${v_He.toFixed(2)}\\text{ m/s} \\)`
-            };
+        generate: (r) => {
+            return PhysicsRandomizer.generate('16_3_3_vrms_compare', r, () => {
+                const studentNo = normalizeStudentNumber(r);
+                const v_Ne_base = r ? PhysicsRandomizer.getRandomValue(300, 460, 10) : 400;
+                const v_Ne = r ? (v_Ne_base + studentNo) : 400;
+                const v_He = v_Ne * Math.sqrt(5);
+                return {
+                    params: { v_Ne, v_Ne_base, r: r ? studentNo : null },
+                    answers: [Math.round(v_He).toString(), v_He.toFixed(1), v_He.toFixed(2)],
+                    answersRaw: [v_He],
+                    explanation: () => `จากสมการอัตราเร็ว RMS: \\( v_{rms} = \\sqrt{\\frac{3RT}{M}} \\) <br> ที่อุณหภูมิ \\(T\\) เท่ากัน จะได้ว่า \\( v_{rms} \\propto \\frac{1}{\\sqrt{M}} \\) <br> เปรียบเทียบระหว่างแก๊สฮีเลียม (He) และนีออน (Ne): <br> \\( \\frac{v_{He}}{v_{Ne}} = \\sqrt{\\frac{M_{Ne}}{M_{He}}} = \\sqrt{\\frac{20}{4}} = \\sqrt{5} \\approx 2.236 \\) <br>  ดังนั้น: \\( v_{He} = ${r ? `(${v_Ne_base} + \ ${studentNo})` : v_Ne} \\times \\sqrt{5} = ${v_Ne} \\times 2.236 = ${v_He.toFixed(2)}\\text{ m/s} \\)`
+                };
+            });
         }
     },
 
@@ -657,12 +762,20 @@ const QUESTION_TEMPLATES = [
         inputs: [{ label: 'พลังงานรวม (Joule):' }],
         text: (p) => `แก๊สฮีเลียม (He) จำนวน \\(${p.n.toFixed(1)}\\text{ mol}\\) บรรจุในภาชนะปิดที่อุณหภูมิ \\(${p.t}^\\circ\\text{C}\\) พลังงานจลน์รวมทั้งหมดของแก๊สนี้ (พลังงานภายในระบบ, U) มีค่ากี่จูล $\\left(กำหนด R = 8.31 J/mol K\\right)$`,
         generate: (r) => {
-            // สุ่มเฉพาะตัวแปรอุณหภูมิ t แล้วบวกเลขที่นักเรียนเข้าไป ส่วนจำนวนโมลคงที่
-            const n = 2.0;
-            const t = r ? randomBasePlusStudentNumber('16_3_mix_internalE_t', r, 10, 60, 10) : 27;
-            const T = t + 273;
-            const U = 1.5 * n * 8.31 * T;
-            return { params: { n, t }, answers: [Math.round(U).toString(), U.toFixed(1)], answersRaw: [U], explanation: () => `พลังงานจลน์รวมของแก๊สทั้งหมด (U) หาได้จาก: <br> \\( U = \\frac{3}{2}nRT \\) <br> แปลง T = ${t} + 273 = ${T} K <br> แทนค่า: \\( U = \\frac{3}{2}(${n.toFixed(1)})(8.31)(${T}) = ${U.toFixed(1)}\\text{ J} \\)` };
+            return PhysicsRandomizer.generate('16_3_mix_internalE', r, () => {
+                const n = 2.0;
+                const studentNo = normalizeStudentNumber(r);
+                const t_base = r ? PhysicsRandomizer.getRandomValue(10, 60, 10) : 27;
+                const t = r ? (t_base + studentNo) : 27;
+                const T = t + 273;
+                const U = 1.5 * n * 8.31 * T;
+                return {
+                    params: { n, t, t_base, r: r ? studentNo : null },
+                    answers: [Math.round(U).toString(), U.toFixed(1)],
+                    answersRaw: [U],
+                    explanation: () => `พลังงานจลน์รวมของแก๊สทั้งหมด (U) หาได้จาก: <br> \\( U = \\frac{3}{2}nRT \\) <br> แปลง T = ${t} + 273 = ${T} K <br> แทนค่า: \\( U = \\frac{3}{2}(${n.toFixed(1)})(8.31)(${T}) = ${U.toFixed(1)}\\text{ J} \\)`
+                };
+            });
         }
     },
     {
@@ -674,18 +787,19 @@ const QUESTION_TEMPLATES = [
         ],
         text: (p) => `จงหาอัตราเร็วอาร์เอ็มเอส (\\( v_{rms} \\)) และพลังงานจลน์เฉลี่ย (\\( \\bar{E}_k \\)) ของโมเลกุลแก๊สไนโตรเจน (N₂) ที่อุณหภูมิ \\(${p.T}\\text{ K}\\) <br><br> <span class="text-sm text-slate-500">(กำหนดมวลโมลาร์ N₂ = 28 g/mol, \\(R = 8.31 \\text{ J/(mol K)}\\), \\(k_B = 1.38 \\times 10^{-23} \\text{ J/K}\\))</span>`,
         generate: (r) => {
-            // สุ่มเฉพาะตัวแปร T แล้วบวกเลขที่นักเรียนเข้าไป
-            const T = r ? randomBasePlusStudentNumber('16_3_mix_vrms_ek_T', r, 280, 360, 10) : 280;
-            const M_kg = 28 * 1e-3;
-            const v = Math.sqrt((3 * 8.31 * T) / M_kg);
-            const Ek = 1.5 * 1.38e-23 * T;
-            const Ek_coeff = Ek / 1e-21;
-
-            return {
-                params: { T },
-                answers: [Math.round(v).toString(), Ek_coeff.toFixed(2)],
-                answersRaw: [v, Ek_coeff],
-                explanation: () => `
+            return PhysicsRandomizer.generate('16_3_mix_vrms_ek', r, () => {
+                const studentNo = normalizeStudentNumber(r);
+                const T_base = r ? PhysicsRandomizer.getRandomValue(280, 360, 10) : 280;
+                const T = r ? (T_base + studentNo) : 280;
+                const M_kg = 28 * 1e-3;
+                const v = Math.sqrt((3 * 8.31 * T) / M_kg);
+                const Ek = 1.5 * 1.38e-23 * T;
+                const Ek_coeff = Ek / 1e-21;
+                return {
+                    params: { T, T_base, r: r ? studentNo : null },
+                    answers: [Math.round(v).toString(), Ek_coeff.toFixed(2)],
+                    answersRaw: [v, Ek_coeff],
+                    explanation: () => `
               <strong>ส่วนที่ 1: หาอัตราเร็วอาร์เอ็มเอส (\\( v_{rms} \\))</strong><br>
               จากสูตร \\( v_{rms} = \\sqrt{\\frac{3RT}{M}} \\)<br>
               แปลงมวลโมลาร์ N₂ เป็นกิโลกรัม/โมล: \\( M = 28 \\times 10^{-3} \\text{ kg/mol} \\)<br>
@@ -693,9 +807,9 @@ const QUESTION_TEMPLATES = [
               <strong>ส่วนที่ 2: หาพลังงานจลน์เฉลี่ย (\\( \\bar{E}_k \\))</strong><br>
               จากสูตร \\( \\bar{E}_k = \\frac{3}{2}k_BT \\)<br>
               แทนค่า: \\( \\bar{E}_k = \\frac{3}{2}(1.38 \\times 10^{-23})(${T}) \\)<br>
-              \\( \\bar{E}_k = ${Ek_coeff.toFixed(2)} \\times 10^{-21} \\text{ J} \\)
-            `
-            };
+              \\( \\bar{E}_k = ${Ek_coeff.toFixed(2)} \\times 10^{-21} \\text{ J} \\)`
+                };
+            });
         }
     },
     {
@@ -707,18 +821,19 @@ const QUESTION_TEMPLATES = [
         ],
         text: (p) => `จงหาอัตราเร็วอาร์เอ็มเอส (\\( v_{rms} \\)) และพลังงานจลน์เฉลี่ย (\\( \\bar{E}_k \\)) ของอะตอมนีออน (Ne) ที่อุณหภูมิ \\(${p.T}\\text{ เคลวิน}\\) <br><br> <span class="text-sm text-slate-500">(กำหนดมวลโมลาร์ของนีออน = \\(20 \\times 10^{-3} \\text{ kg/mol}\\), \\(R = 8.31 \\text{ J/(mol K)}\\), \\(k_B = 1.38 \\times 10^{-23} \\text{ J/K}\\))</span>`,
         generate: (r) => {
-            // สุ่มเฉพาะตัวแปร T แล้วบวกเลขที่นักเรียนเข้าไป
-            const T = r ? randomBasePlusStudentNumber('16_3_mix_vrms_ek_neon_T', r, 400, 480, 10) : 450;
-            const M_kg = 20 * 1e-3;
-            const v = Math.sqrt((3 * 8.31 * T) / M_kg);
-            const Ek = 1.5 * 1.38e-23 * T;
-            const Ek_coeff = Ek / 1e-21;
-
-            return {
-                params: { T },
-                answers: [Math.round(v).toString(), Ek_coeff.toFixed(2), Ek_coeff.toFixed(3)],
-                answersRaw: [v, Ek_coeff],
-                explanation: () => `
+            return PhysicsRandomizer.generate('16_3_mix_vrms_ek_neon', r, () => {
+                const studentNo = normalizeStudentNumber(r);
+                const T_base = r ? PhysicsRandomizer.getRandomValue(400, 480, 10) : 450;
+                const T = r ? (T_base + studentNo) : 450;
+                const M_kg = 20 * 1e-3;
+                const v = Math.sqrt((3 * 8.31 * T) / M_kg);
+                const Ek = 1.5 * 1.38e-23 * T;
+                const Ek_coeff = Ek / 1e-21;
+                return {
+                    params: { T, T_base, r: r ? studentNo : null },
+                    answers: [Math.round(v).toString(), Ek_coeff.toFixed(2), Ek_coeff.toFixed(3)],
+                    answersRaw: [v, Ek_coeff],
+                    explanation: () => `
               <strong>ส่วนที่ 1: หาอัตราเร็วอาร์เอ็มเอส (\\( v_{rms} \\))</strong><br>
               จากสูตร \\( v_{rms} = \\sqrt{\\frac{3RT}{M}} \\)<br>
               โจทย์กำหนดมวลโมลาร์ Ne: \\( M = 20 \\times 10^{-3} \\text{ kg/mol} \\)<br>
@@ -726,12 +841,13 @@ const QUESTION_TEMPLATES = [
               <strong>ส่วนที่ 2: หาพลังงานจลน์เฉลี่ย (\\( \\bar{E}_k \\))</strong><br>
               จากสูตร \\( \\bar{E}_k = \\frac{3}{2}k_BT \\)<br>
               แทนค่า: \\( \\bar{E}_k = \\frac{3}{2}(1.38 \\times 10^{-23})(${T}) \\)<br>
-              \\( \\bar{E}_k = ${Ek_coeff.toFixed(2)} \\times 10^{-21} \\text{ J} \\)
-            `
-            };
+              \\( \\bar{E}_k = ${Ek_coeff.toFixed(2)} \\times 10^{-21} \\text{ J} \\)`
+                };
+            });
         }
     }
 ];
+// >>> EDIT END: PhysicsRandomizer & Randomized Question Templates <<<
 
 // --- Practice Engine ---
 function startPracticeMode(topic) {
